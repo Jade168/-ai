@@ -143,6 +143,15 @@ button:active{transform:scale(0.98)}
 <button onclick="runQuantAnalysis()" class="btn-main" style="width:25%">📊 啟動分析</button>
 <button onclick="startReplay()" class="btn-replay" style="width:25%">▶️ 回放回測</button>
 </div>
+<!-- 新增：批量掃描功能，對應GitHub項目自選股分析 -->
+<div class="row">
+<input id="batch-symbols" placeholder="批量代碼：TSLA,00700,NVDA,AAPL" style="width:60%">
+<button onclick="runBatchScan()" class="btn-main" style="width:38%">📋 批量掃描信號</button>
+</div>
+<!-- 新增：完整回測報告功能，對應GitHub項目策略回測 -->
+<div class="row">
+<button onclick="exportBacktestReport()" class="btn-main" style="width:100%">📊 導出完整回測報告</button>
+</div>
 </div>
 <div id="signal-area" class="signal-area">
 <div class="row" style="justify-content:space-between; margin-bottom:4px">
@@ -185,17 +194,18 @@ button:active{transform:scale(0.98)}
 </div>
 </div>
 <script>
+// ===================== 核心配置：優化AI分析prompt，對應GitHub項目LLM深度分析 =====================
 const CONFIG = {
 zhipuKey: "446ec69558b346a18dbd20849b90ab9f",
 coreNumber: 1836.15,
 ratio: 0.183615,
-systemPrompt: `你是粵語財經分析專家，專注於「數律模型」。
-核心規則：
-1. 核心母數1836.15，根據價格數量級移動小數點。
-2. 369歸元法：價格/日期除以9的餘數為3,6,9為有效觸發。
-3. 支撐阻力計算：結合波動率與樞軸點，上升看阻力，下跌看支撐。
-4. 必須結合最新新聞情感進行綜合判斷，新聞利好加強買入信號，利空加強賣出信號。
-回答用純粵語，簡潔有力，不要用簡體字。`
+systemPrompt: `你是粵語財經分析專家，專注於港股美股量化分析，嚴格按照以下規則輸出：
+1.  先給出核心結論：明確標出「看多」「看空」「觀望」，唔好模棱兩可
+2.  行情分析：結合給出的K線數據、支撐阻力位、數律模型信號，講清楚當前走勢
+3.  新聞解讀：結合最新財經新聞，分析利好利空對股價的影響
+4.  操作建議：給出具體的入場位、止盈位、止損位、倉位建議
+5.  風險提示：講清楚當前最大的潛在風險
+6.  全程用純粵語，簡潔有力，唔好用簡體字，唔好講廢話`
 };
 let priceChart = null;
 let currentModelData = [];
@@ -242,18 +252,14 @@ const periodMap = {'daily':101,'weekly':102,'5min':1};
 return periodMap[period] || 101;
 }
 
-// ==============================================
-// ✅ 100%照搬你舊版成功的東方財富數據接口，完全無修改
-// ==============================================
+// ===================== 100%保留已驗證穩定的東方財富數據接口 =====================
 async function fetchMarketData(symbol, assetType, cycle) {
   showLoading(`🔄 正在從東方財富抓取 ${symbol} 真實數據...`);
-
   try {
     let secid = "";
     let cleanSym = symbol.trim().toUpperCase();
     cleanSym = cleanSym.replace('.US', '').replace('.HK', '').replace('.N', '').replace('.O', '');
 
-    // 完全照搬你舊版的港股/美股secid生成邏輯
     if(/^\d+$/.test(cleanSym)){
       cleanSym = cleanSym.padStart(5, '0');
       secid = `116.${cleanSym}`;
@@ -261,16 +267,13 @@ async function fetchMarketData(symbol, assetType, cycle) {
       secid = `105.${cleanSym}`;
     }
 
-    // 完全照搬你舊版的接口地址、參數
     const klt = mapPeriod(cycle);
     const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=${klt}&fqt=0&end=20500101&lmt=150`;
     
-    // 完全照搬你舊版的直接請求，無代理
     const r = await fetch(url);
     const d = await r.json();
 
     if (!d.data || !d.data.klines || d.data.klines.length === 0) {
-      // 美股後綴兼容邏輯，完全照搬你舊版
       const usSuffixes = ['.N', '.O', '.A', '.K'];
       let klinesResult = null;
       for (const suffix of usSuffixes) {
@@ -291,7 +294,6 @@ async function fetchMarketData(symbol, assetType, cycle) {
       d.data.klines = klinesResult;
     }
 
-    // 完全照搬你舊版的數據格式化邏輯
     const klines = d.data.klines.map(k => {
       const p = k.split(",");
       const time = p[0];
@@ -686,6 +688,82 @@ document.getElementById('logContainer').innerHTML = logs.map(l =>
 addChatMessage('ai', `✅ ${symbol} 分析完成！\n總收益率: ${stats.totalReturn}%\n勝率: ${stats.winRate}%\n最新新聞情感: ${sentiment}\n點擊「回放回測」可觀看交易過程。`);
 }
 
+// ===================== 新增：GitHub項目核心功能，純前端實現 =====================
+// 1. 批量股票掃描功能（對應GitHub項目自選股批量分析）
+async function runBatchScan() {
+  const input = document.getElementById('batch-symbols').value.trim();
+  if (!input) {
+    addChatMessage('error', '請輸入要掃描的股票代碼，用逗號分隔');
+    return;
+  }
+  const symbols = input.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  addChatMessage('system', `🚀 開始批量掃描，共${symbols.length}隻股票...`);
+
+  const scanResults = [];
+  for (const symbol of symbols) {
+    addChatMessage('system', `正在掃描 ${symbol}...`);
+    const rawData = await fetchMarketData(symbol, 'stock', 'daily');
+    if (rawData.length === 0) continue;
+    
+    const modelData = calculateModel(rawData, CONFIG.coreNumber);
+    const lastBar = modelData[modelData.length - 1];
+    
+    let signal = "⚖️ 觀望";
+    if (lastBar.buySignal) signal = "📈 買入信號";
+    if (lastBar.sellSignal) signal = "📉 賣出信號";
+    
+    scanResults.push({
+      symbol,
+      price: lastBar.c.toFixed(2),
+      signal,
+      support: lastBar.supportLine1.toFixed(2),
+      resistance: lastBar.resistanceLine.toFixed(2)
+    });
+  }
+
+  let resultText = `✅ 批量掃描完成，結果如下：\n`;
+  scanResults.forEach(item => {
+    resultText += `【${item.symbol}】 價格:${item.price} | ${item.signal} | 支撐:${item.support} | 阻力:${item.resistance}\n`;
+  });
+  
+  addChatMessage('ai', resultText);
+}
+
+// 2. 完整回測報告功能（對應GitHub項目策略回測）
+function exportBacktestReport() {
+  if (currentModelData.length === 0) {
+    addChatMessage('error', '請先執行分析，先有回測數據');
+    return;
+  }
+  const { stats } = runBacktestEngine(currentModelData);
+  const lastBar = currentModelData[currentModelData.length - 1];
+  
+  const report = `📊 ${currentSymbolInfo.symbol} 數律模型回測報告
+=========================
+📈 收益表現
+總收益率：${stats.totalReturn}%
+年化收益率：${stats.annualReturn}%
+最大回撤：${stats.maxDrawdown}%
+=========================
+🎯 策略表現
+交易次數：${stats.tradeCount}次
+勝率：${stats.winRate}%
+盈虧比：${stats.profitLossRatio}
+=========================
+💡 當前位置
+最新價格：${currentSymbolInfo.latestPrice}
+核心線：${lastBar.coreGravityLine.toFixed(2)}
+強支撐：${lastBar.supportLine1.toFixed(2)}
+阻力位：${lastBar.resistanceLine.toFixed(2)}
+當前信號：${lastBar.buySignal ? '買入' : lastBar.sellSignal ? '賣出' : '觀望'}
+=========================
+⚠️ 風險提示
+歷史回測不代表未來收益，投資有風險，入市需謹慎`;
+
+  addChatMessage('ai', report);
+}
+
+// ===================== 原有輔助函數，完全保留 =====================
 function getGuiYuan(num) {
 if (num === 0) return 0;
 const mod = Math.abs(num) % 9;
