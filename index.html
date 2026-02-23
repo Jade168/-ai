@@ -72,6 +72,10 @@ button:active{transform:scale(0.98)}
 #chatInput{flex:1; height:32px; font-size:12px; background:#111; border-color:#333}
 .chat-input-group{display:flex; gap:4px; margin-bottom:4px;}
 .chat-btn-group{display:flex; gap:4px;}
+/* 新增：本地API配置樣式 */
+.api-config-card{border-color:#f59e0b; margin-bottom:4px;}
+.api-config-card .tag{color:#f59e0b; margin-bottom:6px;}
+.api-config-card input{flex:1;}
 ::-webkit-scrollbar{width:4px; height:4px}
 ::-webkit-scrollbar-track{background:#111}
 ::-webkit-scrollbar-thumb{background:#333; border-radius:2px}
@@ -85,6 +89,18 @@ button:active{transform:scale(0.98)}
 </div>
 <div class="zoom-tip">雙指縮放 | 單指拖動 | 點擊「回放回測」觀看信號生成過程</div>
 </div>
+
+<!-- 新增：本地API配置區，數據只存在你手機瀏覽器，絕不上傳倉庫 -->
+<div class="card api-config-card">
+<div class="tag">🔐 AI API 本地配置（僅存在你嘅瀏覽器，唔會上傳到倉庫）</div>
+<div class="row">
+<input id="api-url" placeholder="API地址：例如 http://127.0.0.1:7861/v1/chat/completions" style="width:60%">
+<input id="api-key" placeholder="API密鑰：例如 pwd" style="width:30%">
+<button onclick="saveApiConfig()" class="btn-main" style="width:10%">保存</button>
+</div>
+<div class="tag" id="api-status" style="color:#999">狀態：未配置</div>
+</div>
+
 <div class="main-container">
 <div class="ai-column">
 <div class="card chat-card">
@@ -103,8 +119,8 @@ button:active{transform:scale(0.98)}
 <div class="chat-message chat-system">
 🚀 終極系統已加載 | 雙核驅動：<br>
 🔘 AI對話（本地大腦，秒回應）<br>
-🔘 專家對話（智譜AI，深度聯網分析）<br>
-✅ 已接入東方財富真實即日/歷史數據接口（舊版原裝請求）
+🔘 專家對話（自建Gemini AI，深度分析）<br>
+✅ 已接入東方財富真實即日/歷史數據接口
 </div>
 </div>
 <div class="chat-input-group">
@@ -194,9 +210,8 @@ button:active{transform:scale(0.98)}
 </div>
 </div>
 <script>
-// ===================== 核心配置：優化粵語AI分析邏輯 =====================
+// ===================== 核心配置 =====================
 const CONFIG = {
-zhipuKey: "446ec69558b346a18dbd20849b90ab9f",
 coreNumber: 1836.15,
 ratio: 0.183615,
 systemPrompt: `你是香港粵語財經分析專家，專注港股美股量化分析，嚴格按照以下規則輸出：
@@ -218,10 +233,13 @@ let aiModelReady = false;
 let fullRawData = [];
 let replayIndex = 0;
 let isReplaying = false;
-window.batchScanResults = []; // 儲存批量掃描結果，畀AI讀取
+window.batchScanResults = [];
 
+// ===================== 頁面加載：讀取本地API配置 =====================
 document.addEventListener('DOMContentLoaded', async () => {
 await tf.setBackend('cpu');
+// 讀取瀏覽器本地保存的API配置
+loadApiConfig();
 fetchUSMeme();
 fetchHKSectors();
 document.getElementById('chatInput').addEventListener('keydown', (e) => {
@@ -238,6 +256,41 @@ addChatMessage('system', `已識別代碼：${val}，點擊「啟動分析」進
 });
 });
 
+// ===================== API配置本地存儲功能 =====================
+function saveApiConfig() {
+const apiUrl = document.getElementById('api-url').value.trim();
+const apiKey = document.getElementById('api-key').value.trim();
+if (!apiUrl) {
+addChatMessage('error', '請輸入API地址');
+return;
+}
+// 保存到瀏覽器本地存儲，永遠不上傳到服務器
+localStorage.setItem('gcli2api_url', apiUrl);
+localStorage.setItem('gcli2api_key', apiKey);
+document.getElementById('api-status').innerText = '狀態：配置已保存，可使用專家分析';
+document.getElementById('api-status').style.color = '#10b981';
+addChatMessage('system', '✅ API配置已保存到本地瀏覽器，唔會上傳到倉庫，可使用專家分析');
+}
+
+function loadApiConfig() {
+const savedUrl = localStorage.getItem('gcli2api_url');
+const savedKey = localStorage.getItem('gcli2api_key');
+if (savedUrl) {
+document.getElementById('api-url').value = savedUrl;
+document.getElementById('api-key').value = savedKey || '';
+document.getElementById('api-status').innerText = '狀態：已加載本地配置';
+document.getElementById('api-status').style.color = '#f59e0b';
+}
+}
+
+function getApiConfig() {
+return {
+url: localStorage.getItem('gcli2api_url'),
+key: localStorage.getItem('gcli2api_key') || ''
+};
+}
+
+// ===================== 原有穩定功能：數據獲取、模型計算 =====================
 function formatSymbolCode(symbol, assetType) {
 symbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
 if (/^0\d{4}$/.test(symbol)) return `${symbol}.HK`;
@@ -254,7 +307,6 @@ const periodMap = {'daily':101,'weekly':102,'5min':1};
 return periodMap[period] || 101;
 }
 
-// ===================== 100%保留已驗證穩定的東方財富數據接口 =====================
 async function fetchMarketData(symbol, assetType, cycle) {
   showLoading(`🔄 正在從東方財富抓取 ${symbol} 真實數據...`);
   try {
@@ -358,7 +410,7 @@ const newsContent = newsList.map(n => `標題：${n.title} 時間：${n.time}`).
 const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
 method: 'POST',
 headers: {
-'Authorization': `Bearer ${CONFIG.zhipuKey}`,
+'Authorization': `Bearer 446ec69558b346a18dbd20849b90ab9f`,
 'Content-Type': 'application/json'
 },
 body: JSON.stringify({
@@ -584,7 +636,7 @@ addChatMessage('system', '✅ AI大腦已初始化！現在可以進行對話或
 }, 1000);
 }
 
-// ===================== 優化後智能本地AI，識別問題類型，靈活回覆 =====================
+// ===================== 優化後智能本地AI =====================
 function chatLocal() {
   const input = document.getElementById('chatInput').value.trim();
   if (!input) return;
@@ -593,15 +645,12 @@ function chatLocal() {
     return; 
   }
 
-  // 記錄用戶問題，清空輸入框
   addChatMessage('user', input);
   document.getElementById('chatInput').value = '';
 
-  // 核心：識別問題關鍵詞，分類處理
   const lowerInput = input.toLowerCase();
   let reply = "";
 
-  // ============== 1. 批量掃描相關問題 ==============
   if (lowerInput.includes('批量') || lowerInput.includes('幾隻') || lowerInput.includes('邊隻') || lowerInput.includes('布局') || lowerInput.includes('優先') || lowerInput.includes('買入信號')) {
     if (!window.batchScanResults || window.batchScanResults.length === 0) {
       reply = "你仲未執行批量掃描㗎！請先輸入股票代碼，點擊「批量掃描信號」，我先可以同你分析邊隻值得布局。";
@@ -640,7 +689,6 @@ function chatLocal() {
     }
   }
 
-  // ============== 2. 買賣操作相關問題 ==============
   else if (lowerInput.includes('買') || lowerInput.includes('賣') || lowerInput.includes('入場') || lowerInput.includes('止盈') || lowerInput.includes('止損') || lowerInput.includes('持有')) {
     if (!currentSymbolInfo.symbol) {
       reply = "你仲未分析單一股票㗎！請先輸入股票代碼，點擊「啟動分析」，我先可以同你講操作建議。";
@@ -676,7 +724,6 @@ function chatLocal() {
     }
   }
 
-  // ============== 3. 關鍵位/行情相關問題 ==============
   else if (lowerInput.includes('支撐') || lowerInput.includes('阻力') || lowerInput.includes('核心線') || lowerInput.includes('價格') || lowerInput.includes('走勢') || lowerInput.includes('高低點')) {
     if (!currentSymbolInfo.symbol) {
       reply = "你仲未分析單一股票㗎！請先輸入股票代碼，點擊「啟動分析」，我先可以同你講關鍵位同走勢。";
@@ -704,7 +751,6 @@ function chatLocal() {
     }
   }
 
-  // ============== 4. 回測/策略相關問題 ==============
   else if (lowerInput.includes('勝率') || lowerInput.includes('回測') || lowerInput.includes('盈虧比') || lowerInput.includes('回撤') || lowerInput.includes('交易次數')) {
     if (!currentModelData || currentModelData.length === 0) {
       reply = "你仲未執行分析㗎！請先輸入股票代碼，點擊「啟動分析」，我先可以同你講回測數據。";
@@ -731,7 +777,6 @@ function chatLocal() {
     }
   }
 
-  // ============== 5. 其他通用問題 ==============
   else {
     if (currentSymbolInfo.symbol) {
       const lastBar = currentModelData[currentModelData.length - 1];
@@ -748,13 +793,12 @@ function chatLocal() {
     }
   }
 
-  // 輸出回覆
   setTimeout(() => {
     addChatMessage('ai', reply);
   }, 300);
 }
 
-// ===================== 優化後專家分析，提示用戶本地運行後端 =====================
+// ===================== 接入自建gcli2api Gemini服務 =====================
 async function chatExpert() {
   const input = document.getElementById('chatInput').value.trim();
   if (!input) return;
@@ -763,12 +807,19 @@ async function chatExpert() {
     return; 
   }
 
+  // 檢查本地API配置
+  const apiConfig = getApiConfig();
+  if (!apiConfig.url) {
+    addChatMessage('error', '請先在頁面頂部配置API地址同密鑰，再使用專家分析');
+    return;
+  }
+
   addChatMessage('user', input);
   document.getElementById('chatInput').value = '';
-  addChatMessage('system', '🌐 正在嘗試調用深度AI分析...');
+  addChatMessage('system', '🌐 正在調用自建Gemini AI深度分析...');
 
   try {
-    // 整理上下文數據
+    // 整理股票數據上下文
     let context = '暫無股票數據，請先執行分析獲取真實市場數據';
     if (currentSymbolInfo.symbol) {
       const lastBar = currentModelData[currentModelData.length - 1];
@@ -793,33 +844,34 @@ ${window.batchScanResults ? JSON.stringify(window.batchScanResults) : '無'}
       `;
     }
 
-    // 嘗試調用API，失敗就提示用戶
-    const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    // 調用你自建的gcli2api服務
+    const response = await fetch(apiConfig.url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${CONFIG.zhipuKey}`,
+        'Authorization': `Bearer ${apiConfig.key}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: "glm-4-flash",
+        model: "gemini-2.5-pro",
         messages: [
           { role: 'system', content: CONFIG.systemPrompt },
           { role: 'user', content: `${input}\n\n【真實市場數據上下文】：${context}` }
         ],
-        temperature: 0.3
+        temperature: 0.3,
+        stream: false
       })
     });
 
     const result = await response.json();
-    if (!result.choices) throw new Error("API調用失敗");
+    if (!result.choices) throw new Error("AI調用失敗，請檢查API地址同密鑰是否正確");
     
-    const reply = result.choices?.[0]?.message?.content || '無回應';
+    const reply = result.choices?.[0]?.message?.content || 'AI無回應';
     document.getElementById('chat-history').lastChild.remove();
     addChatMessage('expert', reply);
 
   } catch (e) {
     document.getElementById('chat-history').lastChild.remove();
-    addChatMessage('error', `❌ 深度AI調用失敗，你可以用「💬 AI對話」按鈕使用本地智能分析，深度分析需要本地運行server.py後端服務先可以使用。`);
+    addChatMessage('error', `❌ AI調用失敗：${e.message}，請確保：1. gcli2api服務已經啟動 2. API地址同密鑰配置正確`);
   }
 }
 
@@ -873,7 +925,6 @@ document.getElementById('logContainer').innerHTML = logs.map(l =>
 addChatMessage('ai', `✅ ${symbol} 分析完成！\n總收益率: ${stats.totalReturn}%\n勝率: ${stats.winRate}%\n最新新聞情感: ${sentiment}\n點擊「回放回測」可觀看交易過程。`);
 }
 
-// ===================== 優化後批量掃描，自動儲存結果畀AI讀取 =====================
 async function runBatchScan() {
   const input = document.getElementById('batch-symbols').value.trim();
   if (!input) {
@@ -905,10 +956,8 @@ async function runBatchScan() {
     });
   }
 
-  // 儲存批量掃描結果，畀AI讀取
   window.batchScanResults = scanResults;
 
-  // 輸出結果
   let resultText = `✅ 批量掃描完成，結果如下：\n`;
   scanResults.forEach(item => {
     resultText += `【${item.symbol}】 價格:${item.price} | ${item.signal} | 支撐:${item.support} | 阻力:${item.resistance}\n`;
@@ -917,7 +966,6 @@ async function runBatchScan() {
   addChatMessage('ai', resultText);
 }
 
-// ===================== 完整回測報告功能 =====================
 function exportBacktestReport() {
   if (currentModelData.length === 0) {
     addChatMessage('error', '請先執行分析，先有回測數據');
@@ -952,7 +1000,6 @@ function exportBacktestReport() {
   addChatMessage('ai', report);
 }
 
-// ===================== 原有輔助函數，完全保留 =====================
 function getGuiYuan(num) {
 if (num === 0) return 0;
 const mod = Math.abs(num) % 9;
