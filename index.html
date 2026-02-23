@@ -132,7 +132,7 @@ button:active{transform:scale(0.98)}
           🚀 終極系統已加載 | 雙核驅動：<br>
           🔘 AI對話（本地大腦，秒回應）<br>
           🔘 專家對話（智譜AI，深度聯網分析）<br>
-          ✅ 已接入akquant真實數據接口（已優化跨域）
+          ✅ 已接入akquant真實數據接口（已優化跨域代理）
         </div>
       </div>
 
@@ -153,7 +153,7 @@ button:active{transform:scale(0.98)}
       <div class="row">
         <input id="symbol" placeholder="代碼：TSLA/00700/^GSPC" style="width:30%" list="symbolList">
         <datalist id="symbolList">
-          <option value="TSLA"><option value="NVDA"><option value="00700"><option value="03690">
+          <option value="TSLA"><option value="NVDA"><option value="DIS"><option value="00700"><option value="03690">
           <option value="XAUUSD"><option value="EURUSD"><option value="BTCUSD">
         </datalist>
         <select id="period" style="width:20%">
@@ -227,19 +227,19 @@ button:active{transform:scale(0.98)}
 
 <script>
 // ==============================================
-// 核心配置區
+// 核心配置區（已更換為穩定代理）
 // ==============================================
 const CONFIG = {
   // 智譜AI完整密鑰（已填寫您提供的完整密碼）
-  zhipuKey: "446ec69558bb90ab9f",
+  zhipuKey: "446ec69558b346a18dbd20849b90ab9f",
   // akquant 公開免密數據API配置（無需密鑰即可抓取即時數據、新聞）
   akquantKey: "公開接口無需密鑰",
   akquantApiBase: "https://api.akquant.cn/v1",
   // 數律模型配置
   coreNumber: 1836.15,
   ratio: 0.183615,
-  // 跨域代理（已更換為穩定免費代理，解決前端瀏覽器CORS跨域限制）
-  corsProxy: "https://corsproxy.io/?",
+  // 跨域代理（已更換為更穩定的免費代理，解決前端瀏覽器CORS跨域限制）
+  corsProxy: "https://api.codetabs.com/v1/proxy?quest=",
   // AI系統提示詞
   systemPrompt: `你是粵語財經分析專家，專注於「數律模型」。
 核心規則：
@@ -438,7 +438,7 @@ function generateMockData(symbol, assetType, cycle) {
   let basePrice = 0;
 
   const priceMap = {
-    'TSLA': 250, 'NVDA': 800, 'AAPL': 180, '00700': 350, '03690': 100,
+    'TSLA': 250, 'NVDA': 800, 'AAPL': 180, 'DIS': 120, '00700': 350, '03690': 100,
     'XAUUSD': 2000, 'BTCUSD': 45000, '^GSPC': 5000, '^HSI': 17000
   };
   basePrice = priceMap[symbol.toUpperCase()] || (assetType === 'stock' ? 100 : 1);
@@ -906,7 +906,7 @@ function showStatus(text, type) {
 
 // 板塊監控
 async function fetchUSMeme() {
-  const list = ["TSLA", "NVDA", "AAPL"];
+  const list = ["TSLA", "NVDA", "AAPL", "DIS"];
   const el = document.getElementById('meme-hot-list');
   el.innerHTML = list.map(s => `<div class="meme-item us-item" onclick="quickLook('${s}')"><b>${s}</b><br>🔥 Hot</div>`).join('');
 }
