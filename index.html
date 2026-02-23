@@ -143,12 +143,12 @@ button:active{transform:scale(0.98)}
 <button onclick="runQuantAnalysis()" class="btn-main" style="width:25%">📊 啟動分析</button>
 <button onclick="startReplay()" class="btn-replay" style="width:25%">▶️ 回放回測</button>
 </div>
-<!-- 新增：批量掃描功能，對應GitHub項目自選股分析 -->
+<!-- 批量掃描功能 -->
 <div class="row">
 <input id="batch-symbols" placeholder="批量代碼：TSLA,00700,NVDA,AAPL" style="width:60%">
 <button onclick="runBatchScan()" class="btn-main" style="width:38%">📋 批量掃描信號</button>
 </div>
-<!-- 新增：完整回測報告功能，對應GitHub項目策略回測 -->
+<!-- 完整回測報告功能 -->
 <div class="row">
 <button onclick="exportBacktestReport()" class="btn-main" style="width:100%">📊 導出完整回測報告</button>
 </div>
@@ -194,18 +194,19 @@ button:active{transform:scale(0.98)}
 </div>
 </div>
 <script>
-// ===================== 核心配置：優化AI分析prompt，對應GitHub項目LLM深度分析 =====================
+// ===================== 核心配置：優化粵語AI分析邏輯 =====================
 const CONFIG = {
 zhipuKey: "446ec69558b346a18dbd20849b90ab9f",
 coreNumber: 1836.15,
 ratio: 0.183615,
-systemPrompt: `你是粵語財經分析專家，專注於港股美股量化分析，嚴格按照以下規則輸出：
-1.  先給出核心結論：明確標出「看多」「看空」「觀望」，唔好模棱兩可
-2.  行情分析：結合給出的K線數據、支撐阻力位、數律模型信號，講清楚當前走勢
+systemPrompt: `你是香港粵語財經分析專家，專注港股美股量化分析，嚴格按照以下規則輸出：
+1.  先給出核心結論：明確標出「看多」「看空」「觀望」，絕對唔好模棱兩可
+2.  行情分析：結合給出的K線數據、支撐阻力位、1836.15數律模型信號，講清楚當前走勢
 3.  新聞解讀：結合最新財經新聞，分析利好利空對股價的影響
-4.  操作建議：給出具體的入場位、止盈位、止損位、倉位建議
-5.  風險提示：講清楚當前最大的潛在風險
-6.  全程用純粵語，簡潔有力，唔好用簡體字，唔好講廢話`
+4.  操作建議：給出具體的入場位、止盈位、止損位、倉位建議，一定要貼合香港股民的操作習慣
+5.  風險提示：每一次分析都要講清楚當前最大的潛在風險
+6.  全程用純粵語口語，唔好講官話、唔好太書面，就好似同股民傾計一樣
+7.  絕對唔好用簡體字，所有內容都用繁體粵語`
 };
 let priceChart = null;
 let currentModelData = [];
@@ -217,6 +218,7 @@ let aiModelReady = false;
 let fullRawData = [];
 let replayIndex = 0;
 let isReplaying = false;
+window.batchScanResults = []; // 儲存批量掃描結果，畀AI讀取
 
 document.addEventListener('DOMContentLoaded', async () => {
 await tf.setBackend('cpu');
@@ -582,60 +584,243 @@ addChatMessage('system', '✅ AI大腦已初始化！現在可以進行對話或
 }, 1000);
 }
 
+// ===================== 優化後智能本地AI，識別問題類型，靈活回覆 =====================
 function chatLocal() {
-const input = document.getElementById('chatInput').value.trim();
-if (!input) return;
-if (!aiModelReady) { addChatMessage('error', '請先初始化AI'); return; }
-addChatMessage('user', input);
-document.getElementById('chatInput').value = '';
-const codeMatch = input.match(/[A-Z]+|0\d{4}/g);
-if (codeMatch && !currentSymbolInfo.symbol) {
-document.getElementById('symbol').value = codeMatch[0];
-addChatMessage('ai', `收到指令：分析 ${codeMatch[0]}。正在為您抓取真實數據...`);
-setTimeout(() => runQuantAnalysis(), 500);
-return;
-}
-setTimeout(() => {
-const reply = currentSymbolInfo.symbol ? 
-`【本地分析】${currentSymbolInfo.symbol} 當前價格 ${currentSymbolInfo.latestPrice}。\n核心線: ${currentSymbolInfo.coreGravityLine.toFixed(2)}\n強支撐: ${currentSymbolInfo.supportLine1.toFixed(2)}\n阻力: ${currentSymbolInfo.resistanceLine.toFixed(2)}\n新聞情感: ${currentSentiment}\n建議: 區間操作，止損設於強支撐下方` :
-'請先輸入股票代碼並點擊「啟動分析」，我會為您提供真實數據支持的分析。';
-addChatMessage('ai', reply);
-}, 300);
+  const input = document.getElementById('chatInput').value.trim();
+  if (!input) return;
+  if (!aiModelReady) { 
+    addChatMessage('error', '請先初始化AI'); 
+    return; 
+  }
+
+  // 記錄用戶問題，清空輸入框
+  addChatMessage('user', input);
+  document.getElementById('chatInput').value = '';
+
+  // 核心：識別問題關鍵詞，分類處理
+  const lowerInput = input.toLowerCase();
+  let reply = "";
+
+  // ============== 1. 批量掃描相關問題 ==============
+  if (lowerInput.includes('批量') || lowerInput.includes('幾隻') || lowerInput.includes('邊隻') || lowerInput.includes('布局') || lowerInput.includes('優先') || lowerInput.includes('買入信號')) {
+    if (!window.batchScanResults || window.batchScanResults.length === 0) {
+      reply = "你仲未執行批量掃描㗎！請先輸入股票代碼，點擊「批量掃描信號」，我先可以同你分析邊隻值得布局。";
+    } else {
+      const buyList = window.batchScanResults.filter(item => item.signal.includes('買入'));
+      const watchList = window.batchScanResults.filter(item => item.signal.includes('觀望'));
+      const sellList = window.batchScanResults.filter(item => item.signal.includes('賣出'));
+      
+      reply = `📊 今次批量掃描咗${window.batchScanResults.length}隻股票，結果如下：\n`;
+      
+      if (buyList.length > 0) {
+        reply += `\n✅ 發出買入信號嘅標的：\n`;
+        buyList.forEach(item => {
+          reply += `【${item.symbol}】價格：${item.price} | 強支撐：${item.support} | 阻力：${item.resistance}\n`;
+        });
+        reply += `\n👉 優先布局建議：優先睇支撐最堅實、上升空間最大嘅${buyList[0].symbol}，入場位設喺強支撐上方，止損放支撐下方2%，倉位建議3-5成。`;
+      } else {
+        reply += `\n⚠️ 今次掃描嘅標的暫時無明確買入信號，建議繼續觀察。`;
+      }
+
+      if (sellList.length > 0) {
+        reply += `\n\n📉 發出賣出信號嘅標的：\n`;
+        sellList.forEach(item => {
+          reply += `【${item.symbol}】價格：${item.price} | 阻力：${item.resistance}\n`;
+        });
+        reply += `👉 建議：持有呢幾隻標的嘅話，可以逢高減倉止盈，未入場就唔好追高。`;
+      }
+
+      if (watchList.length > 0) {
+        reply += `\n\n👀 觀望清單（震盪區間，無明確信號）：\n`;
+        watchList.forEach(item => {
+          reply += `${item.symbol} | 價格${item.price} | 支撐${item.support}\n`;
+        });
+        reply += `👉 建議：呢幾隻可以加入自選觀察，等跌穿支撐或者升破阻力再決定操作。`;
+      }
+    }
+  }
+
+  // ============== 2. 買賣操作相關問題 ==============
+  else if (lowerInput.includes('買') || lowerInput.includes('賣') || lowerInput.includes('入場') || lowerInput.includes('止盈') || lowerInput.includes('止損') || lowerInput.includes('持有')) {
+    if (!currentSymbolInfo.symbol) {
+      reply = "你仲未分析單一股票㗎！請先輸入股票代碼，點擊「啟動分析」，我先可以同你講操作建議。";
+    } else {
+      const lastBar = currentModelData[currentModelData.length - 1];
+      const isBuySignal = lastBar.buySignal;
+      const isSellSignal = lastBar.sellSignal;
+      const currency = currentSymbolInfo.symbol.match(/^\d+$/) ? '港元' : '美元';
+
+      reply = `【${currentSymbolInfo.symbol} 操作建議】\n`;
+      reply += `當前價格：${currentSymbolInfo.latestPrice} ${currency}\n`;
+      reply += `強支撐位：${currentSymbolInfo.supportLine1} ${currency}\n`;
+      reply += `阻力位：${currentSymbolInfo.resistanceLine} ${currency}\n\n`;
+
+      if (isBuySignal) {
+        reply += `📈 當前發出數律模型買入信號，建議：\n`;
+        reply += `✅ 入場位：${currentSymbolInfo.supportLine1} - ${currentSymbolInfo.latestPrice} 區間分批入場\n`;
+        reply += `✅ 止盈位：${currentSymbolInfo.resistanceLine} 附近，觸及可以減倉一半\n`;
+        reply += `✅ 止損位：${(currentSymbolInfo.supportLine1 * 0.98).toFixed(2)} ${currency}（強支撐下方2%），跌穿堅決止損\n`;
+        reply += `✅ 倉位建議：3-5成倉，唔好滿倉操作`;
+      } else if (isSellSignal) {
+        reply += `📉 當前發出數律模型賣出信號，建議：\n`;
+        reply += `✅ 持有倉位：建議逢高減倉，止盈離場，避免回調風險\n`;
+        reply += `✅ 未入場：暫時唔好買入，等待回調到強支撐位再觀察信號\n`;
+        reply += `✅ 風險提示：下方第一支撐${currentSymbolInfo.supportLine1} ${currency}，跌穿會有進一步回調風險`;
+      } else {
+        reply += `⚖️ 當前處於震盪區間，無明確買賣信號，建議：\n`;
+        reply += `✅ 持有倉位：繼續持有，止盈設喺阻力位，止損設喺強支撐\n`;
+        reply += `✅ 未入場：等待明確信號，跌穿支撐唔好盲目抄底，升破阻力再輕倉跟進\n`;
+        reply += `✅ 操作策略：高拋低吸，區間操作，控制倉位唔好超過5成`;
+      }
+      reply += `\n\n⚠️ 風險提示：以上建議只係基於數律模型分析，投資有風險，入市需謹慎。`;
+    }
+  }
+
+  // ============== 3. 關鍵位/行情相關問題 ==============
+  else if (lowerInput.includes('支撐') || lowerInput.includes('阻力') || lowerInput.includes('核心線') || lowerInput.includes('價格') || lowerInput.includes('走勢') || lowerInput.includes('高低點')) {
+    if (!currentSymbolInfo.symbol) {
+      reply = "你仲未分析單一股票㗎！請先輸入股票代碼，點擊「啟動分析」，我先可以同你講關鍵位同走勢。";
+    } else {
+      const lastBar = currentModelData[currentModelData.length - 1];
+      const startPrice = currentModelData[0].c;
+      const endPrice = lastBar.c;
+      const trend = endPrice > startPrice * 1.03 ? '上升趨勢' : endPrice < startPrice * 0.97 ? '下跌趨勢' : '震盪走勢';
+      const currency = currentSymbolInfo.symbol.match(/^\d+$/) ? '港元' : '美元';
+      const periodHigh = Math.max(...currentModelData.map(d => d.h));
+      const periodLow = Math.min(...currentModelData.map(d => d.l));
+
+      reply = `【${currentSymbolInfo.symbol} 當前行情與關鍵位】\n`;
+      reply += `📅 最新日期：${lastBar.date.split(' ')[0]}\n`;
+      reply += `💵 最新收盤價：${currentSymbolInfo.latestPrice} ${currency}\n`;
+      reply += `📊 區間走勢：${trend}\n`;
+      reply += `📈 區間最高點：${periodHigh.toFixed(2)} ${currency}\n`;
+      reply += `📉 區間最低點：${periodLow.toFixed(2)} ${currency}\n\n`;
+      reply += `📍 數律模型核心關鍵位：\n`;
+      reply += `✅ 核心線（數律中樞）：${lastBar.coreGravityLine.toFixed(2)} ${currency}（價格在線上偏強，線下偏弱）\n`;
+      reply += `✅ 強支撐位：${currentSymbolInfo.supportLine1} ${currency}（跌穿呢個位走勢會轉弱）\n`;
+      reply += `✅ 弱支撐位：${currentSymbolInfo.supportLine2} ${currency}\n`;
+      reply += `✅ 阻力位：${currentSymbolInfo.resistanceLine} ${currency}（升破呢個位先有新上升空間）\n\n`;
+      reply += `💡 操作邏輯：靠近強支撐可考慮低吸，靠近阻力位可考慮高拋，嚴格做好止盈止損。`;
+    }
+  }
+
+  // ============== 4. 回測/策略相關問題 ==============
+  else if (lowerInput.includes('勝率') || lowerInput.includes('回測') || lowerInput.includes('盈虧比') || lowerInput.includes('回撤') || lowerInput.includes('交易次數')) {
+    if (!currentModelData || currentModelData.length === 0) {
+      reply = "你仲未執行分析㗎！請先輸入股票代碼，點擊「啟動分析」，我先可以同你講回測數據。";
+    } else {
+      const { stats } = runBacktestEngine(currentModelData);
+      reply = `【${currentSymbolInfo.symbol} 數律模型歷史回測報告】\n`;
+      reply += `📈 收益表現：\n`;
+      reply += `總收益率：${stats.totalReturn}%\n`;
+      reply += `年化收益率：${stats.annualReturn}%\n`;
+      reply += `⚠️ 最大回撤：${stats.maxDrawdown}%\n\n`;
+      reply += `🎯 策略表現：\n`;
+      reply += `歷史交易次數：${stats.tradeCount}次\n`;
+      reply += `歷史勝率：${stats.winRate}%\n`;
+      reply += `盈虧比：${stats.profitLossRatio}\n\n`;
+      
+      if (parseFloat(stats.winRate) >= 60 && parseFloat(stats.profitLossRatio) >= 1.5) {
+        reply += `💡 策略評級：優秀，勝率同盈虧比都符合穩定盈利標準，可跟隨信號操作，配合倉位管理效果更好。`;
+      } else if (parseFloat(stats.winRate) >= 40) {
+        reply += `💡 策略評級：合格，有一定盈利能力，建議配合嚴格的止盈止損同倉位管理控制風險。`;
+      } else {
+        reply += `💡 策略評級：需謹慎，歷史勝率偏低，建議觀察為主，唔好盲目跟隨信號操作。`;
+      }
+      reply += `\n\n⚠️ 溫馨提示：歷史回測不代表未來收益，市場隨時有變化，一定要控制風險。`;
+    }
+  }
+
+  // ============== 5. 其他通用問題 ==============
+  else {
+    if (currentSymbolInfo.symbol) {
+      const lastBar = currentModelData[currentModelData.length - 1];
+      reply = `【${currentSymbolInfo.symbol} 本地分析】\n`;
+      reply += `當前價格：${currentSymbolInfo.latestPrice}\n`;
+      reply += `核心線：${lastBar.coreGravityLine.toFixed(2)}\n`;
+      reply += `強支撐：${currentSymbolInfo.supportLine1}\n`;
+      reply += `阻力：${currentSymbolInfo.resistanceLine}\n`;
+      reply += `新聞情感：${currentSentiment}\n`;
+      reply += `當前信號：${lastBar.buySignal ? '買入' : lastBar.sellSignal ? '賣出' : '觀望'}\n\n`;
+      reply += `如果你有更具體嘅問題，可以直接問我，比如：\n👉 呢隻股入場位同止損位設喺邊度？\n👉 批量掃描嘅股票邊隻值得買？\n👉 呢個策略歷史勝率有幾高？`;
+    } else {
+      reply = "請先輸入股票代碼並點擊「啟動分析」，我會為你提供真實數據支持的分析。你可以問我關於股票嘅支撐阻力、買賣建議、回測數據、批量選股等問題，我都會用粵語同你解答。";
+    }
+  }
+
+  // 輸出回覆
+  setTimeout(() => {
+    addChatMessage('ai', reply);
+  }, 300);
 }
 
+// ===================== 優化後專家分析，提示用戶本地運行後端 =====================
 async function chatExpert() {
-const input = document.getElementById('chatInput').value.trim();
-if (!input) return;
-if (!aiModelReady) { addChatMessage('error', '請先初始化AI'); return; }
-addChatMessage('user', input);
-document.getElementById('chatInput').value = '';
-addChatMessage('system', '🌐 正在調用專家模型進行深度聯網分析...');
-try {
-const context = currentSymbolInfo.symbol ? 
-`當前圖表數據：品種${currentSymbolInfo.symbol}，最新價格${currentSymbolInfo.latestPrice}，核心線${currentSymbolInfo.coreGravityLine.toFixed(2)}，強支撐${currentSymbolInfo.supportLine1.toFixed(2)}，阻力${currentSymbolInfo.resistanceLine.toFixed(2)}，最新新聞情感${currentSentiment}，新聞列表：${currentNewsList.map(n=>`${n.time} ${n.title}`).join('\n')}` : 
-'暫無圖表數據，請先執行分析獲取真實市場數據';
-const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
-method: 'POST',
-headers: {
-'Authorization': `Bearer ${CONFIG.zhipuKey}`,
-'Content-Type': 'application/json'
-},
-body: JSON.stringify({
-model: "glm-4",
-messages: [
-{ role: 'system', content: CONFIG.systemPrompt },
-{ role: 'user', content: `${input}\n\n[真實市場數據上下文]: ${context}` }
-]
-})
-});
-const result = await response.json();
-const reply = result.choices?.[0]?.message?.content || '無回應';
-document.getElementById('chat-history').lastChild.remove();
-addChatMessage('expert', reply);
-} catch (e) {
-document.getElementById('chat-history').lastChild.remove();
-addChatMessage('error', `❌ 專家調用失敗：${e.message}`);
-}
+  const input = document.getElementById('chatInput').value.trim();
+  if (!input) return;
+  if (!aiModelReady) { 
+    addChatMessage('error', '請先初始化AI'); 
+    return; 
+  }
+
+  addChatMessage('user', input);
+  document.getElementById('chatInput').value = '';
+  addChatMessage('system', '🌐 正在嘗試調用深度AI分析...');
+
+  try {
+    // 整理上下文數據
+    let context = '暫無股票數據，請先執行分析獲取真實市場數據';
+    if (currentSymbolInfo.symbol) {
+      const lastBar = currentModelData[currentModelData.length - 1];
+      const { stats } = runBacktestEngine(currentModelData);
+      context = `
+【當前分析標的】${currentSymbolInfo.symbol}
+【最新數據】
+最新價格：${currentSymbolInfo.latestPrice}
+核心線：${lastBar.coreGravityLine.toFixed(2)}
+強支撐：${currentSymbolInfo.supportLine1}
+阻力位：${currentSymbolInfo.resistanceLine}
+當前信號：${lastBar.buySignal ? '買入' : lastBar.sellSignal ? '賣出' : '觀望'}
+新聞情感：${currentSentiment}
+【回測數據】
+總收益率：${stats.totalReturn}%
+勝率：${stats.winRate}%
+最大回撤：${stats.maxDrawdown}%
+【最新新聞】
+${currentNewsList.map(n=>`${n.time} ${n.title}`).join('\n')}
+【批量掃描結果】
+${window.batchScanResults ? JSON.stringify(window.batchScanResults) : '無'}
+      `;
+    }
+
+    // 嘗試調用API，失敗就提示用戶
+    const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CONFIG.zhipuKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: "glm-4-flash",
+        messages: [
+          { role: 'system', content: CONFIG.systemPrompt },
+          { role: 'user', content: `${input}\n\n【真實市場數據上下文】：${context}` }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    const result = await response.json();
+    if (!result.choices) throw new Error("API調用失敗");
+    
+    const reply = result.choices?.[0]?.message?.content || '無回應';
+    document.getElementById('chat-history').lastChild.remove();
+    addChatMessage('expert', reply);
+
+  } catch (e) {
+    document.getElementById('chat-history').lastChild.remove();
+    addChatMessage('error', `❌ 深度AI調用失敗，你可以用「💬 AI對話」按鈕使用本地智能分析，深度分析需要本地運行server.py後端服務先可以使用。`);
+  }
 }
 
 async function runQuantAnalysis() {
@@ -688,8 +873,7 @@ document.getElementById('logContainer').innerHTML = logs.map(l =>
 addChatMessage('ai', `✅ ${symbol} 分析完成！\n總收益率: ${stats.totalReturn}%\n勝率: ${stats.winRate}%\n最新新聞情感: ${sentiment}\n點擊「回放回測」可觀看交易過程。`);
 }
 
-// ===================== 新增：GitHub項目核心功能，純前端實現 =====================
-// 1. 批量股票掃描功能（對應GitHub項目自選股批量分析）
+// ===================== 優化後批量掃描，自動儲存結果畀AI讀取 =====================
 async function runBatchScan() {
   const input = document.getElementById('batch-symbols').value.trim();
   if (!input) {
@@ -721,6 +905,10 @@ async function runBatchScan() {
     });
   }
 
+  // 儲存批量掃描結果，畀AI讀取
+  window.batchScanResults = scanResults;
+
+  // 輸出結果
   let resultText = `✅ 批量掃描完成，結果如下：\n`;
   scanResults.forEach(item => {
     resultText += `【${item.symbol}】 價格:${item.price} | ${item.signal} | 支撐:${item.support} | 阻力:${item.resistance}\n`;
@@ -729,7 +917,7 @@ async function runBatchScan() {
   addChatMessage('ai', resultText);
 }
 
-// 2. 完整回測報告功能（對應GitHub項目策略回測）
+// ===================== 完整回測報告功能 =====================
 function exportBacktestReport() {
   if (currentModelData.length === 0) {
     addChatMessage('error', '請先執行分析，先有回測數據');
@@ -738,12 +926,13 @@ function exportBacktestReport() {
   const { stats } = runBacktestEngine(currentModelData);
   const lastBar = currentModelData[currentModelData.length - 1];
   
-  const report = `📊 ${currentSymbolInfo.symbol} 數律模型回測報告
+  const report = `📊 ${currentSymbolInfo.symbol} 數律模型完整回測報告
 =========================
 📈 收益表現
 總收益率：${stats.totalReturn}%
 年化收益率：${stats.annualReturn}%
 最大回撤：${stats.maxDrawdown}%
+最終資金：${stats.finalFund} 港元
 =========================
 🎯 策略表現
 交易次數：${stats.tradeCount}次
