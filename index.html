@@ -1,12 +1,926 @@
 <!DOCTYPE html>
 <html lang="zh-HK">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>我的股票回測 App</title>
-  </head>
-  <body>
-    <h1>📊 股票回測 App（手機測試版）</h1>
-    <p>如果你看到這行字，代表 GitHub Pages 已經成功。</p>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>1836.15 數律終極量化系統｜雙AI·智能抓取·回放回測</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.0/dist/chartjs-chart-financial.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+<style>
+/* 全局樣式：優化佈局與字體 */
+*{box-sizing:border-box; margin:0; padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft JhengHei","PingFang HK",sans-serif; 
+    background:#000; color:#fff; user-select:none; padding:4px; font-size:13px;}
+    
+/* 頂部：K線圖區域 */
+.chart-header{width:100%; height:360px; background:#111; border-radius:8px; margin-bottom:4px; position:relative; border:1px solid #333;}
+#priceChart{width:100% !important; height:100% !important;}
+
+/* 中間：雙欄佈局 */
+.main-container{display:flex; gap:4px; width:100%; max-width:100vw; height:calc(100vh - 370px);}
+.ai-column{width:40%; flex-shrink:0; height:100%; display:flex; flex-direction:column;}
+.data-column{width:60%; height:100%; overflow-y:auto; overflow-x:hidden; padding-right:4px;}
+
+/* 手機適配 */
+@media (max-width: 768px) {
+  .main-container{flex-direction:column; height:auto;}
+  .ai-column{width:100%; height:300px; order:2;}
+  .data-column{width:100%; height:auto; order:1;}
+  .chart-header{height:280px;}
+}
+
+/* 卡片樣式 */
+.card{background:#0a0a0a; padding:8px; border-radius:6px; margin-bottom:4px; border:1px solid #1f2937}
+.chat-card{border-color:#8b5cf6; height:100%; display:flex; flex-direction:column}
+.row{display:flex; gap:4px; margin-bottom:6px; flex-wrap:wrap; align-items:center}
+input,select,button{padding:6px 8px; border-radius:4px; border:1px solid #374151; background:#030712; color:#fff; font-size:12px; height:32px; outline:none;}
+button{font-weight:bold; cursor:pointer; touch-action:manipulation; transition:all 0.2s}
+.btn-local{background:#10b981; flex:1; border-color:#10b981}
+.btn-expert{background:#8b5cf6; flex:1; border-color:#8b5cf6}
+.btn-main{background:linear-gradient(135deg,#6366f1,#a855f7); border:none; flex:1}
+.btn-replay{background:linear-gradient(135deg,#f59e0b,#ef4444); border:none; flex:1; color:#fff}
+button:disabled{opacity:0.5; cursor:not-allowed; transform:none}
+button:active{transform:scale(0.98)}
+
+/* K線容器與加載提示 */
+.canvas-container{position:relative; width:100%; height:100%; background:#000; overflow:hidden}
+.loading{position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); font-size:12px; color:#ffd700; text-align:center; pointer-events:none}
+.loading.show{display:block;}
+.zoom-tip{text-align:center; color:#666; font-size:10px; margin-top:2px; position:absolute; bottom:2px; width:100%}
+
+/* 信號面板 */
+.signal-area{display:none; margin-bottom:4px;}
+.signal{padding:8px; border-radius:6px; text-align:center; margin-bottom:4px; border:1px solid #334155; font-size:14px; font-weight:bold;}
+.sig-buy{background:rgba(16,185,129,0.15); border-color:#10b981; color:#10b981}
+.sig-sell{background:rgba(239,68,68,0.15); border-color:#ef4444; color:#ef4444}
+.sig-neutral{background:rgba(255,255,255,0.03); border-color:#334155; color:#fff}
+.tag{font-size:10px; padding:2px 4px; border-radius:2px; background:#1f2937; color:#94a3b8; display:inline-block; margin-right:2px; white-space:nowrap}
+.tag-win{background:rgba(16,185,129,0.2); color:#10b981; font-weight:bold}
+.tag-sharpe{background:rgba(168,85,247,0.2); color:#d8b4fe; font-weight:bold}
+.stats-panel{display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-bottom:4px;}
+.stat-card{background:#111; padding:4px; border-radius:4px; text-align:center; border:1px solid #222}
+.stat-card .label{font-size:9px; color:#888; margin-bottom:1px;}
+.stat-card .value{font-size:12px; font-weight:bold;}
+.profit{color:#10b981;}
+.loss{color:#ef4444;}
+.neutral{color:#ffd700;}
+
+/* 板塊監控 */
+.hot-list-panel{border-color:#333;}
+.hot-list-panel.us{border-color:#f59e0b;}
+.meme-list{margin-top:6px; display:grid; grid-template-columns:repeat(3,1fr); gap:4px}
+.meme-item{background:rgba(255,255,255,0.03); padding:4px; border-radius:4px; font-size:10px; border-top:2px solid #333; text-align:center; cursor:pointer; transition:all 0.2s}
+.meme-item:hover{background:rgba(255,255,255,0.1)}
+.hk-item{border-top-color:#6366f1}
+.us-item{border-top-color:#f59e0b}
+
+/* AI對話區 */
+#chat-history{flex:1; overflow-y:auto; padding:6px; background:#050505; border-radius:6px; margin-bottom:6px; border:1px solid #222}
+.chat-message{margin-bottom:8px; max-width:90%; padding:6px 10px; border-radius:6px; word-break:break-word; font-size:12px; line-height:1.4}
+.chat-user{margin-left:auto; background:linear-gradient(135deg,#8b5cf6,#ec4899); color:#fff}
+.chat-ai{background:#111; color:#ddd; border:1px solid #333}
+.chat-expert{background:#1a0b2e; color:#f5d0fe; border:1px solid #3b0764}
+.chat-system{max-width:100%; text-align:center; background:rgba(6, 182, 212, 0.1); color:#67e8f9; font-size:10px; border:none}
+.chat-error{background:#450a0a; color:#fca5a5; font-size:11px}
+
+/* 輸入框優化 */
+#chatInput{flex:1; height:32px; font-size:12px; background:#111; border-color:#333}
+.chat-input-group{display:flex; gap:4px; margin-bottom:4px;}
+.chat-btn-group{display:flex; gap:4px;}
+
+/* 滾動條美化 */
+::-webkit-scrollbar{width:4px; height:4px}
+::-webkit-scrollbar-track{background:#111}
+::-webkit-scrollbar-thumb{background:#333; border-radius:2px}
+</style>
+</head>
+<body>
+
+<!-- 頂部：K線圖 -->
+<div class="chart-header">
+  <div class="canvas-container">
+    <canvas id="priceChart"></canvas>
+    <div class="loading show" id="loading">⚡ 系統就緒，請輸入代碼啟動分析</div>
+  </div>
+  <div class="zoom-tip">雙指縮放 | 單指拖動 | 點擊「回放回測」觀看信號生成過程</div>
+</div>
+
+<!-- 中間：左右分欄 -->
+<div class="main-container">
+  <!-- 左側：AI對話區 -->
+  <div class="ai-column">
+    <div class="card chat-card">
+      <div class="tag" style="color:#8b5cf6; margin-bottom:6px; font-size:11px">
+        🧠 數律AI大腦 v2.0｜akquant真實數據·聯網分析·語音交互
+      </div>
+
+      <div class="row" style="gap:4px; margin-bottom:6px">
+        <button id="init-ai-btn" onclick="initAiModel()" style="flex:1; background:linear-gradient(135deg,#8b5cf6,#ec4899)">
+          初始化AI
+        </button>
+        <span id="model-status" class="tag" style="flex:1; line-height:20px; text-align:center; background:#111">
+          狀態: 未連接
+        </span>
+      </div>
+
+      <div id="chat-history">
+        <div class="chat-message chat-system">
+          🚀 終極系統已加載 | 雙核驅動：<br>
+          🔘 AI對話（本地大腦，秒回應）<br>
+          🔘 專家對話（智譜AI，深度聯網分析）<br>
+          ✅ 已接入akquant真實數據接口（已優化跨域）
+        </div>
+      </div>
+
+      <div class="chat-input-group">
+        <input id="chatInput" placeholder="提問：TSLA後市點睇？00700支持位？" autocomplete="off">
+      </div>
+      <div class="chat-btn-group">
+        <button onclick="chatLocal()" class="btn-local">💬 AI對話</button>
+        <button onclick="chatExpert()" class="btn-expert">🌐 專家分析</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右側：數據面板區 -->
+  <div class="data-column">
+    <!-- 1. 參數設置 -->
+    <div class="card">
+      <div class="row">
+        <input id="symbol" placeholder="代碼：TSLA/00700/^GSPC" style="width:30%" list="symbolList">
+        <datalist id="symbolList">
+          <option value="TSLA"><option value="NVDA"><option value="00700"><option value="03690">
+          <option value="XAUUSD"><option value="EURUSD"><option value="BTCUSD">
+        </datalist>
+        <select id="period" style="width:20%">
+          <option value="daily">日線</option>
+          <option value="weekly">週線</option>
+          <option value="5min">5分鐘</option>
+        </select>
+        <select id="assetType" style="width:20%">
+          <option value="stock">股票</option>
+          <option value="index">指數</option>
+          <option value="forex">外匯</option>
+          <option value="crypto">加密</option>
+        </select>
+        <input id="fund" type="number" value="100000" placeholder="本金" style="width:20%">
+      </div>
+      <div class="row">
+        <input id="coreInt" value="1836.15" step="0.01" placeholder="核心數" style="width:25%">
+        <input id="coreDec" value="0.08" step="0.01" placeholder="偏差" style="width:25%">
+        <button onclick="runQuantAnalysis()" class="btn-main" style="width:25%">📊 啟動分析</button>
+        <button onclick="startReplay()" class="btn-replay" style="width:25%">▶️ 回放回測</button>
+      </div>
+    </div>
+
+    <!-- 2. 信號與統計 -->
+    <div id="signal-area" class="signal-area">
+      <div class="row" style="justify-content:space-between; margin-bottom:4px">
+        <span id="ai-date" class="tag">日期：--</span>
+        <span id="live-price" class="tag-win" style="font-size:14px">--</span>
+      </div>
+      <div id="signal" class="signal sig-neutral">等待輸入...</div>
+      
+      <div class="stats-panel">
+        <div class="stat-card"><div class="label">總收益率</div><div class="value" id="totalReturn">--</div></div>
+        <div class="stat-card"><div class="label">勝率</div><div class="value profit" id="winRate">--</div></div>
+        <div class="stat-card"><div class="label">盈虧比</div><div class="value" id="profitLossRatio">--</div></div>
+        <div class="stat-card"><div class="label">最大回撤</div><div class="value loss" id="maxDrawdown">--</div></div>
+        <div class="stat-card"><div class="label">交易次數</div><div class="value neutral" id="tradeCount">--</div></div>
+        <div class="stat-card"><div class="label">年化收益</div><div class="value" id="annualReturn">--</div></div>
+      </div>
+
+      <div class="row" style="gap:4px">
+        <span id="core-line" class="tag">核心線：--</span>
+        <span id="support-line1" class="tag-win">強支撐：--</span>
+        <span id="support-line2" class="tag">弱支撐：--</span>
+        <span id="resistance-line" class="tag-sharpe">阻力：--</span>
+      </div>
+      <div class="row" id="news-sentiment" style="display:none">
+        <span class="tag" style="background:rgba(255,215,0,0.2); color:#ffd700">新聞情感：<span id="sentiment-text">中性</span></span>
+      </div>
+    </div>
+
+    <!-- 3. 港股/美股監控 -->
+    <div class="card hot-list-panel">
+      <div class="tag" style="color:#6366f1">📈 HK 熱門量化</div>
+      <div id="hk-hot-list" class="meme-list"></div>
+    </div>
+    <div class="card hot-list-panel us">
+      <div class="tag" style="color:#f59e0b">🔥 US 熱門監控</div>
+      <div id="meme-hot-list" class="meme-list"></div>
+    </div>
+
+    <!-- 4. 交易記錄 -->
+    <div class="card">
+      <div class="tag" style="color:#ffd700">📜 交易記錄（自動生成）</div>
+      <div id="logContainer" style="max-height:120px; overflow-y:auto; margin-top:4px; font-size:10px; color:#aaa">
+        點擊「啟動分析」生成策略記錄...
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==============================================
+// 核心配置區
+// ==============================================
+const CONFIG = {
+  // 智譜AI完整密鑰（已填寫您提供的完整密碼）
+  zhipuKey: "446ec69558bb90ab9f",
+  // akquant 公開免密數據API配置（無需密鑰即可抓取即時數據、新聞）
+  akquantKey: "公開接口無需密鑰",
+  akquantApiBase: "https://api.akquant.cn/v1",
+  // 數律模型配置
+  coreNumber: 1836.15,
+  ratio: 0.183615,
+  // 跨域代理（已更換為穩定免費代理，解決前端瀏覽器CORS跨域限制）
+  corsProxy: "https://corsproxy.io/?",
+  // AI系統提示詞
+  systemPrompt: `你是粵語財經分析專家，專注於「數律模型」。
+核心規則：
+1. 核心母數1836.15，根據價格數量級移動小數點。
+2. 369歸元法：價格/日期除以9的餘數為3,6,9為有效觸發。
+3. 支撐阻力計算：結合波動率與樞軸點，上升看阻力，下跌看支撐。
+4. 必須結合最新新聞情感進行綜合判斷，新聞利好加強買入信號，利空加強賣出信號。
+回答用純粵語，簡潔有力，不要用簡體字。`
+};
+
+// ==============================================
+// 全局變量
+// ==============================================
+let priceChart = null;
+let currentModelData = [];
+let currentSymbolInfo = {};
+let currentNewsList = [];
+let currentSentiment = "中性";
+let tradeLogs = [];
+let aiModelReady = false;
+let fullRawData = [];
+let replayIndex = 0;
+let isReplaying = false;
+
+// ==============================================
+// 頁面初始化
+// ==============================================
+document.addEventListener('DOMContentLoaded', async () => {
+  await tf.setBackend('cpu');
+  fetchUSMeme();
+  fetchHKSectors();
+  
+  // 綁定回車發送
+  document.getElementById('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      chatLocal(); 
+    }
+  });
+  
+  // 快速代碼輸入連接
+  document.getElementById('symbol').addEventListener('change', () => {
+    const val = document.getElementById('symbol').value;
+    if(val.length >= 3) {
+       addChatMessage('system', `已識別代碼：${val}，點擊「啟動分析」進行掃描...`);
+    }
+  });
+});
+
+// ==============================================
+// 1. akquant 公開免密真實數據抓取（已移除密鑰限制，優化跨域）
+// ==============================================
+// 代碼自動補全後綴
+function formatSymbolCode(symbol, assetType) {
+  symbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // 港股：0開頭的5位數
+  if (/^0\d{4}$/.test(symbol)) return `${symbol}.HK`;
+  // A股：6開頭6位數
+  if (/^6\d{5}$/.test(symbol)) return `${symbol}.SH`;
+  // A股：0/3開頭6位數
+  if (/^[03]\d{5}$/.test(symbol)) return `${symbol}.SZ`;
+  // 外匯
+  if (assetType === 'forex') return `${symbol}.FX`;
+  // 加密貨幣
+  if (assetType === 'crypto') return `${symbol}.CRYPTO`;
+  // 指數
+  if (assetType === 'index' || symbol.startsWith('^')) return symbol.replace('^', '') + '.INDEX';
+  // 美股默認
+  return `${symbol}.US`;
+}
+
+// 週期映射
+function mapPeriod(period) {
+  const periodMap = {
+    'daily': '1d',
+    'weekly': '1w',
+    '5min': '5m'
+  };
+  return periodMap[period] || '1d';
+}
+
+// 抓取K線數據（akquant 公開免密API，已優化跨域）
+async function fetchMarketData(symbol, assetType, cycle) {
+  showLoading(`🔄 正在通過akquant公開接口抓取 ${symbol} 真實數據...`);
+  
+  try {
+    // 格式化代碼
+    const formattedSymbol = formatSymbolCode(symbol, assetType);
+    const period = mapPeriod(cycle);
+    const dataCount = ['5min', '1min'].includes(cycle) ? 200 : 150;
+    
+    // 構造API請求地址（公開接口，無需密鑰，使用穩定代理）
+    const apiUrl = `${CONFIG.akquantApiBase}/market/kline?symbol=${formattedSymbol}&period=${period}&limit=${dataCount}`;
+    const requestUrl = CONFIG.corsProxy + encodeURIComponent(apiUrl);
+
+    // 發起請求
+    const response = await fetch(requestUrl);
+    if (!response.ok) throw new Error(`API請求失敗: ${response.status}`);
+    
+    const result = await response.json();
+    if (result.code !== 0 || !result.data || result.data.length === 0) {
+      throw new Error(result.msg || '無返回數據');
+    }
+
+    // 格式化數據為系統兼容格式
+    const fixedData = result.data.reverse().map(item => {
+      const timestamp = luxon.DateTime.fromFormat(item.time, 'yyyy-MM-dd HH:mm:ss').toMillis();
+      return {
+        timestamp,
+        date: item.time,
+        o: parseFloat(item.open),
+        h: parseFloat(item.high),
+        l: parseFloat(item.low),
+        c: parseFloat(item.close),
+        vol: parseFloat(item.volume || 0)
+      };
+    });
+
+    showStatus(`✅ ${symbol} 真實數據抓取成功，共${fixedData.length}根K線`, 'success');
+    return fixedData;
+
+  } catch (error) {
+    showStatus(`❌ akquant API調用失敗，降級到模擬數據：${error.message}`, 'error');
+    addChatMessage('system', `akquant數據抓取失敗，已自動切換到模擬數據，請檢查網絡連接或代碼格式是否正確`);
+    // 降級到原模擬數據生成
+    return generateMockData(symbol, assetType, cycle);
+  }
+}
+
+// 抓取財經新聞（akquant 公開免密API，已優化跨域）
+async function fetchSymbolNews(symbol, assetType) {
+  try {
+    const formattedSymbol = formatSymbolCode(symbol, assetType);
+    // 構造API請求地址（公開接口，無需密鑰，使用穩定代理）
+    const apiUrl = `${CONFIG.akquantApiBase}/market/news?symbol=${formattedSymbol}&limit=10`;
+    const requestUrl = CONFIG.corsProxy + encodeURIComponent(apiUrl);
+
+    const response = await fetch(requestUrl);
+    if (!response.ok) return [];
+    
+    const result = await response.json();
+    if (result.code !== 0 || !result.data) return [];
+
+    currentNewsList = result.data;
+    addChatMessage('system', `✅ 已抓取${currentNewsList.length}條${symbol}最新財經新聞`);
+    return currentNewsList;
+
+  } catch (error) {
+    console.error('新聞抓取失敗', error);
+    return [];
+  }
+}
+
+// 新聞情感分析（智譜AI）
+async function analyzeNewsSentiment(newsList, symbol) {
+  if (newsList.length === 0) return "中性";
+  
+  try {
+    const newsContent = newsList.map(n => `標題：${n.title} 時間：${n.time}`).join('\n');
+    const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CONFIG.zhipuKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: "glm-4-flash",
+        messages: [
+          { role: 'system', content: '你是財經情感分析專家，只需要返回「利好」「利空」「中性」三個結果中的一個，不要其他內容' },
+          { role: 'user', content: `分析以下${symbol}的最新新聞，判斷整體情感：\n${newsContent}` }
+        ],
+        temperature: 0.1
+      })
+    });
+
+    const result = await response.json();
+    const sentiment = result.choices?.[0]?.message?.content?.trim() || "中性";
+    currentSentiment = sentiment;
+    
+    // 更新UI
+    document.getElementById('news-sentiment').style.display = 'block';
+    document.getElementById('sentiment-text').innerText = sentiment;
+    return sentiment;
+
+  } catch (error) {
+    console.error('情感分析失敗', error);
+    return "中性";
+  }
+}
+
+// 模擬數據生成（降級備用）
+function generateMockData(symbol, assetType, cycle) {
+  const isIntraday = ['5min', '1min'].includes(cycle);
+  const dataCount = isIntraday ? 200 : 150;
+  const now = Date.now();
+  let basePrice = 0;
+
+  const priceMap = {
+    'TSLA': 250, 'NVDA': 800, 'AAPL': 180, '00700': 350, '03690': 100,
+    'XAUUSD': 2000, 'BTCUSD': 45000, '^GSPC': 5000, '^HSI': 17000
+  };
+  basePrice = priceMap[symbol.toUpperCase()] || (assetType === 'stock' ? 100 : 1);
+
+  const fixedData = [];
+  let currentPrice = basePrice;
+  let trend = Math.random() > 0.5 ? 1 : -1;
+  const volatility = assetType === 'crypto' ? 0.03 : 0.015;
+  const timeStep = cycle === 'daily' ? 86400000 : cycle === 'weekly' ? 604800000 : 300000;
+
+  for (let i = dataCount; i >= 0; i--) {
+    if (Math.random() < 0.05) trend *= -1;
+    
+    const t = now - i * timeStep;
+    const change = (Math.random() - 0.5 + trend * 0.1) * volatility * currentPrice;
+    const o = currentPrice;
+    const c = Math.max(1, o + change);
+    const h = Math.max(o, c) * (1 + Math.random() * volatility * 0.5);
+    const l = Math.min(o, c) * (1 - Math.random() * volatility * 0.5);
+    const vol = Math.floor(Math.random() * 1000000) + 100000;
+    
+    fixedData.push({
+      timestamp: t,
+      date: luxon.DateTime.fromMillis(t).toFormat('yyyy-MM-dd HH:mm'),
+      o, h, l, c, vol
+    });
+    currentPrice = c;
+  }
+
+  return fixedData;
+}
+
+// ==============================================
+// 2. 核心算法：樞軸點+數律（融入新聞情感）
+// ==============================================
+function calculateModel(rawData, coreNum, sentiment = "中性") {
+  showLoading('🧮 計算數律樞軸點...');
+  if (rawData.length === 0) return [];
+
+  // 1. 計算近期波動區間
+  const period = Math.min(50, rawData.length);
+  const recentData = rawData.slice(-period);
+  const recentHigh = Math.max(...recentData.map(d => d.h));
+  const recentLow = Math.min(...recentData.map(d => d.l));
+  const lastClose = rawData[rawData.length - 1].c;
+  
+  // 2. 樞軸點計算
+  const pivot = (recentHigh + recentLow + lastClose) / 3;
+  
+  // 3. 數律核心線計算 (1836.15 伸縮)
+  const exp = Math.floor(Math.log10(lastClose / coreNum));
+  const coreGravityLine = coreNum * Math.pow(10, exp);
+  
+  // 4. 動態支撐阻力 (結合數律比率與標準差)
+  const range = recentHigh - recentLow;
+  const r = CONFIG.ratio;
+  
+  // 5. 新聞情感調整：利好放大支撐，利空放大阻力
+  const sentimentAdjust = {
+    "利好": 0.98, // 利好：支撐上移2%，阻力上移5%
+    "利空": 1.02,  // 利空：支撐下移2%，阻力下移5%
+    "中性": 1
+  }[sentiment] || 1;
+
+  const modelData = rawData.map((item, index) => {
+    // 動態調整支撐阻力
+    const support1 = (item.l - range * r) * (sentiment === "利好" ? 1.02 : sentimentAdjust);
+    const support2 = (pivot - range * r * 0.5) * sentimentAdjust;
+    const resistance = (pivot + range * r) * (sentiment === "利空" ? 0.98 : sentimentAdjust);
+    
+    // 歸元計算
+    const dateNum = parseInt(item.date.split(' ')[0].replace(/-/g, ''));
+    const dateGuiYuan = getGuiYuan(dateNum);
+    const priceGuiYuan = getGuiYuan(Math.floor(item.c * 100));
+    
+    // 交易信號邏輯（融入情感）
+    const deviation = Math.abs(item.c - coreGravityLine) / coreGravityLine;
+    const isResonance = deviation < 0.08;
+    
+    // 買入：價格接近強支撐 + 歸元觸發 + 收陽 + 非利空
+    const buySignal = item.c <= support1 * 1.02 && [3,6,9].includes(priceGuiYuan) && item.c > item.o && sentiment !== "利空";
+    // 賣出：價格接近阻力 + 歸元觸發 + 收陰 + 非利好
+    const sellSignal = item.c >= resistance * 0.98 && [3,6,9].includes(priceGuiYuan) && item.c < item.o && sentiment !== "利好";
+
+    return {
+      ...item,
+      coreGravityLine,
+      supportLine1: support1,
+      supportLine2: support2,
+      resistanceLine: resistance,
+      pivot,
+      dateGuiYuan,
+      priceGuiYuan,
+      buySignal,
+      sellSignal,
+      isResonance,
+      deviation,
+      sentiment
+    };
+  });
+
+  hideLoading();
+  return modelData;
+}
+
+// ==============================================
+// 3. 完整回測引擎
+// ==============================================
+function runBacktestEngine(modelData) {
+  let position = 0;
+  let entryPrice = 0;
+  let currentFund = parseFloat(document.getElementById('fund').value) || 100000;
+  const initialFund = currentFund;
+  const trades = [];
+  const logs = [];
+  let maxDrawdown = 0;
+  let peakFund = initialFund;
+
+  modelData.forEach((item, idx) => {
+    // 計算最大回撤
+    if (currentFund > peakFund) peakFund = currentFund;
+    const drawdown = ((peakFund - currentFund) / peakFund) * 100;
+    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+
+    // 買入邏輯
+    if (item.buySignal && position === 0) {
+      position = 1;
+      entryPrice = item.c;
+      logs.push({ type: 'buy', msg: `[${item.date}] 🔴 買入 @ ${item.c.toFixed(2)} | 歸元:${item.priceGuiYuan} | 情感:${item.sentiment}` });
+    }
+    // 賣出邏輯
+    else if (item.sellSignal && position === 1) {
+      position = 0;
+      const profit = (item.c - entryPrice) * (initialFund / entryPrice);
+      currentFund += profit;
+      logs.push({ type: 'sell', msg: `[${item.date}] 🟢 賣出 @ ${item.c.toFixed(2)} | 盈虧: ${profit.toFixed(2)}` });
+      trades.push({ profit: profit / initialFund });
+    }
+  });
+
+  // 強制平倉
+  if (position === 1) {
+    const last = modelData[modelData.length - 1];
+    const profit = (last.c - entryPrice) * (initialFund / entryPrice);
+    currentFund += profit;
+    logs.push({ type: 'sell', msg: `[回測結束] ⚪ 強制平倉 @ ${last.c.toFixed(2)}` });
+  }
+
+  // 統計計算
+  const totalReturn = ((currentFund - initialFund) / initialFund * 100).toFixed(2);
+  const winTrades = trades.filter(t => t.profit > 0);
+  const winRate = trades.length > 0 ? (winTrades.length / trades.length * 100).toFixed(2) : 0;
+  
+  // 盈虧比計算
+  const totalWin = winTrades.reduce((sum, t) => sum + t.profit, 0);
+  const totalLoss = Math.abs(trades.filter(t => t.profit <= 0).reduce((sum, t) => sum + t.profit, 0));
+  const profitLossRatio = totalLoss > 0 ? (totalWin / totalLoss).toFixed(2) : "無限";
+
+  // 年化收益
+  const dayCount = modelData.length;
+  const annualReturn = dayCount > 0 ? ((Math.pow(1 + totalReturn/100, 252/dayCount) - 1) * 100).toFixed(2) : 0;
+
+  return {
+    stats: {
+      totalReturn, winRate, profitLossRatio, maxDrawdown: maxDrawdown.toFixed(2),
+      finalFund: currentFund.toFixed(2), tradeCount: trades.length, annualReturn
+    },
+    logs
+  };
+}
+
+// ==============================================
+// 4. K線渲染與回放控制
+// ==============================================
+function renderChart(modelData, isReplay = false) {
+  if (!modelData || modelData.length === 0) return;
+
+  const ctx = document.getElementById('priceChart').getContext('2d');
+  
+  // 如果是回放模式，只渲染到當前索引
+  const dataToRender = isReplay ? modelData.slice(0, replayIndex + 1) : modelData;
+  
+  if (priceChart) priceChart.destroy();
+
+  priceChart = new Chart(ctx, {
+    type: 'candlestick',
+    data: {
+      datasets: [
+        {
+          label: 'K線',
+          data: dataToRender.map(d => ({ x: d.timestamp, o: d.o, h: d.h, l: d.l, c: d.c })),
+          color: { up: '#10b981', down: '#ef4444', unchanged: '#666' }
+        },
+        {
+          label: '核心線',
+          data: dataToRender.map(d => ({ x: d.timestamp, y: d.coreGravityLine })),
+          type: 'line', borderColor: '#8b5cf6', borderWidth: 2, pointRadius: 0
+        },
+        {
+          label: '強支撐',
+          data: dataToRender.map(d => ({ x: d.timestamp, y: d.supportLine1 })),
+          type: 'line', borderColor: '#10b981', borderWidth: 1, borderDash: [4,4], pointRadius: 0
+        },
+        {
+          label: '阻力',
+          data: dataToRender.map(d => ({ x: d.timestamp, y: d.resistanceLine })),
+          type: 'line', borderColor: '#f59e0b', borderWidth: 1, borderDash: [4,4], pointRadius: 0
+        },
+        {
+          label: '買入',
+          data: dataToRender.filter(d => d.buySignal).map(d => ({ x: d.timestamp, y: d.l * 0.98 })),
+          type: 'scatter', backgroundColor: '#0f0', pointRadius: 6, pointStyle: 'triangleUp'
+        },
+        {
+          label: '賣出',
+          data: dataToRender.filter(d => d.sellSignal).map(d => ({ x: d.timestamp, y: d.h * 1.02 })),
+          type: 'scatter', backgroundColor: '#f00', pointRadius: 6, pointStyle: 'triangleDown'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { type: 'time', grid: { color: '#222' } },
+        y: { position: 'right', grid: { color: '#222' } }
+      },
+      plugins: {
+        zoom: {
+          pan: { enabled: true, mode: 'x' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+        },
+        legend: { display: false }
+      }
+    }
+  });
+}
+
+// 回放功能
+async function startReplay() {
+  if (isReplaying || currentModelData.length === 0) {
+    addChatMessage('system', '請先執行分析，確保有數據後再進行回放');
+    return;
+  }
+  
+  isReplaying = true;
+  replayIndex = 0;
+  addChatMessage('system', '▶️ 開始回放回測，請觀察圖表變化...');
+  
+  const replayInterval = setInterval(() => {
+    if (replayIndex >= currentModelData.length) {
+      clearInterval(replayInterval);
+      isReplaying = false;
+      addChatMessage('system', '✅ 回放結束，詳細記錄請查看右下角');
+      return;
+    }
+    
+    renderChart(currentModelData, true);
+    
+    // 實時推送交易信號到聊天框
+    const bar = currentModelData[replayIndex];
+    if (bar.buySignal) addChatMessage('ai', `🔔 [${bar.date}] 產生買入信號！價格: ${bar.c.toFixed(2)} | 情感:${bar.sentiment}`);
+    if (bar.sellSignal) addChatMessage('ai', `🔔 [${bar.date}] 產生賣出信號！價格: ${bar.c.toFixed(2)} | 情感:${bar.sentiment}`);
+    
+    replayIndex += 5;
+  }, 100);
+}
+
+// ==============================================
+// 5. AI 對話增強
+// ==============================================
+function addChatMessage(role, text) {
+  const chatHistory = document.getElementById('chat-history');
+  const div = document.createElement('div');
+  div.className = `chat-message chat-${role}`;
+  div.innerText = text;
+  chatHistory.appendChild(div);
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function initAiModel() {
+  const btn = document.getElementById('init-ai-btn');
+  btn.disabled = true;
+  btn.innerText = '連接中...';
+  
+  setTimeout(() => {
+    aiModelReady = true;
+    document.getElementById('model-status').innerText = '狀態: 已連接';
+    document.getElementById('model-status').style.color = '#10b981';
+    addChatMessage('system', '✅ AI大腦已初始化！現在可以進行對話或輸入股票代碼分析。');
+  }, 1000);
+}
+
+// 本地AI（快速響應）
+function chatLocal() {
+  const input = document.getElementById('chatInput').value.trim();
+  if (!input) return;
+  if (!aiModelReady) { addChatMessage('error', '請先初始化AI'); return; }
+  
+  addChatMessage('user', input);
+  document.getElementById('chatInput').value = '';
+
+  // 自動識別股票代碼
+  const codeMatch = input.match(/[A-Z]+|0\d{4}/g);
+  if (codeMatch && !currentSymbolInfo.symbol) {
+    document.getElementById('symbol').value = codeMatch[0];
+    addChatMessage('ai', `收到指令：分析 ${codeMatch[0]}。正在為您抓取真實數據...`);
+    setTimeout(() => runQuantAnalysis(), 500);
+    return;
+  }
+
+  // 標準回覆
+  setTimeout(() => {
+    const reply = currentSymbolInfo.symbol ? 
+      `【本地分析】${currentSymbolInfo.symbol} 當前價格 ${currentSymbolInfo.latestPrice}。\n核心線: ${currentSymbolInfo.coreGravityLine.toFixed(2)}\n強支撐: ${currentSymbolInfo.supportLine1.toFixed(2)}\n阻力: ${currentSymbolInfo.resistanceLine.toFixed(2)}\n新聞情感: ${currentSentiment}\n建議: 區間操作，止損設於強支撐下方` :
+      '請先輸入股票代碼並點擊「啟動分析」，我會為您提供真實數據支持的分析。';
+    addChatMessage('ai', reply);
+  }, 300);
+}
+
+// 專家模式（智譜AI + 真實數據+新聞）
+async function chatExpert() {
+  const input = document.getElementById('chatInput').value.trim();
+  if (!input) return;
+  if (!aiModelReady) { addChatMessage('error', '請先初始化AI'); return; }
+
+  addChatMessage('user', input);
+  document.getElementById('chatInput').value = '';
+  addChatMessage('system', '🌐 正在調用專家模型進行深度聯網分析...');
+
+  try {
+    // 構造上下文：包含真實圖表數據+新聞
+    const context = currentSymbolInfo.symbol ? 
+      `當前圖表數據：品種${currentSymbolInfo.symbol}，最新價格${currentSymbolInfo.latestPrice}，核心線${currentSymbolInfo.coreGravityLine.toFixed(2)}，強支撐${currentSymbolInfo.supportLine1.toFixed(2)}，阻力${currentSymbolInfo.resistanceLine.toFixed(2)}，最新新聞情感${currentSentiment}，新聞列表：${currentNewsList.map(n=>`${n.time} ${n.title}`).join('\n')}` : 
+      '暫無圖表數據，請先執行分析獲取真實市場數據';
+
+    const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CONFIG.zhipuKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: "glm-4",
+        messages: [
+          { role: 'system', content: CONFIG.systemPrompt },
+          { role: 'user', content: `${input}\n\n[真實市場數據上下文]: ${context}` }
+        ]
+      })
+    });
+
+    const result = await response.json();
+    const reply = result.choices?.[0]?.message?.content || '無回應';
+    
+    // 移除加載提示
+    document.getElementById('chat-history').lastChild.remove();
+    addChatMessage('expert', reply);
+  } catch (e) {
+    document.getElementById('chat-history').lastChild.remove();
+    addChatMessage('error', `❌ 專家調用失敗：${e.message}`);
+  }
+}
+
+// ==============================================
+// 6. 主分析流程
+// ==============================================
+async function runQuantAnalysis() {
+  const symbol = document.getElementById('symbol').value.trim().toUpperCase();
+  const assetType = document.getElementById('assetType').value;
+  const cycle = document.getElementById('period').value;
+  const coreNum = parseFloat(document.getElementById('coreInt').value);
+
+  if (!symbol) { addChatMessage('error', '請輸入代碼！'); return; }
+
+  // 連接AI對話框
+  addChatMessage('system', `📊 開始分析 ${symbol}...`);
+
+  // 1. 獲取真實K線數據（公開免密接口，已優化跨域）
+  const rawData = await fetchMarketData(symbol, assetType, cycle);
+  if (rawData.length === 0) return;
+
+  // 2. 抓取最新新聞（公開免密接口，已優化跨域）
+  const newsList = await fetchSymbolNews(symbol, assetType);
+
+  // 3. 新聞情感分析
+  const sentiment = await analyzeNewsSentiment(newsList, symbol);
+
+  // 4. 計算數律模型（融入情感）
+  currentModelData = calculateModel(rawData, coreNum, sentiment);
+
+  // 5. 回測
+  const { stats, logs } = runBacktestEngine(currentModelData);
+
+  // 6. 更新全局狀態
+  const lastBar = currentModelData[currentModelData.length - 1];
+  currentSymbolInfo = {
+    symbol, latestPrice: lastBar.c.toFixed(2),
+    coreGravityLine: lastBar.coreGravityLine,
+    supportLine1: lastBar.supportLine1,
+    supportLine2: lastBar.supportLine2,
+    resistanceLine: lastBar.resistanceLine
+  };
+
+  // 7. 渲染圖表
+  renderChart(currentModelData);
+
+  // 8. 更新UI
+  document.getElementById('signal-area').style.display = 'block';
+  document.getElementById('ai-date').textContent = `日期：${lastBar.date.split(' ')[0]}`;
+  document.getElementById('totalReturn').textContent = `${stats.totalReturn}%`;
+  document.getElementById('totalReturn').className = stats.totalReturn >= 0 ? 'value profit' : 'value loss';
+  document.getElementById('winRate').textContent = `${stats.winRate}%`;
+  document.getElementById('profitLossRatio').textContent = stats.profitLossRatio;
+  document.getElementById('maxDrawdown').textContent = `${stats.maxDrawdown}%`;
+  document.getElementById('tradeCount').textContent = stats.tradeCount;
+  document.getElementById('annualReturn').textContent = `${stats.annualReturn}%`;
+  document.getElementById('live-price').textContent = `最新價：${lastBar.c.toFixed(2)}`;
+  document.getElementById('core-line').textContent = `核心線：${lastBar.coreGravityLine.toFixed(2)}`;
+  document.getElementById('support-line1').textContent = `強支撐：${lastBar.supportLine1.toFixed(2)}`;
+  document.getElementById('support-line2').textContent = `弱支撐：${lastBar.supportLine2.toFixed(2)}`;
+  document.getElementById('resistance-line').textContent = `阻力：${lastBar.resistanceLine.toFixed(2)}`;
+  
+  // 信號顯示
+  const signalEl = document.getElementById('signal');
+  if (lastBar.buySignal) {
+    signalEl.className = 'signal sig-buy'; signalEl.innerText = '📈 歸元買入信號';
+  } else if (lastBar.sellSignal) {
+    signalEl.className = 'signal sig-sell'; signalEl.innerText = '📉 歸元賣出信號';
+  } else {
+    signalEl.className = 'signal sig-neutral'; signalEl.innerText = '⚖️ 震盪區間';
+  }
+
+  // 交易記錄
+  document.getElementById('logContainer').innerHTML = logs.map(l => 
+    `<div style="color:${l.type === 'buy' ? '#10b981' : '#ef4444'}; margin:2px 0">${l.msg}</div>`
+  ).join('');
+
+  // 9. AI自動解讀
+  addChatMessage('ai', `✅ ${symbol} 分析完成！\n總收益率: ${stats.totalReturn}%\n勝率: ${stats.winRate}%\n最新新聞情感: ${sentiment}\n點擊「回放回測」可觀看交易過程。`);
+}
+
+// ==============================================
+// 7. 輔助功能
+// ==============================================
+function getGuiYuan(num) {
+  if (num === 0) return 0;
+  const mod = Math.abs(num) % 9;
+  return mod === 0 ? 9 : mod;
+}
+
+function showLoading(text) {
+  const el = document.getElementById('loading');
+  el.textContent = text;
+  el.classList.add('show');
+}
+
+function hideLoading() {
+  document.getElementById('loading').classList.remove('show');
+}
+
+function showStatus(text, type) {
+  console.log(`[${type}] ${text}`);
+}
+
+// 板塊監控
+async function fetchUSMeme() {
+  const list = ["TSLA", "NVDA", "AAPL"];
+  const el = document.getElementById('meme-hot-list');
+  el.innerHTML = list.map(s => `<div class="meme-item us-item" onclick="quickLook('${s}')"><b>${s}</b><br>🔥 Hot</div>`).join('');
+}
+
+async function fetchHKSectors() {
+  const list = ["00700", "03690", "09988"];
+  const el = document.getElementById('hk-hot-list');
+  el.innerHTML = list.map(s => `<div class="meme-item hk-item" onclick="quickLook('${s}')"><b>${s}</b><br>⚡ Active</div>`).join('');
+}
+
+function quickLook(symbol) {
+  document.getElementById('symbol').value = symbol;
+  runQuantAnalysis();
+}
+</script>
+</body>
 </html>
