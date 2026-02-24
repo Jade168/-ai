@@ -605,19 +605,69 @@ const dataToRender = isReplay ? modelData.slice(0, replayIndex + 1) : modelData;
 const ctx = document.getElementById('priceChart').getContext('2d');
 if (priceChart) priceChart.destroy();
 
-// 計算1836.15數律關鍵位（基於全部歷史數據）
-const allHighs = modelData.map(d => d.h);
-const allLows = modelData.map(d => d.l);
-const absoluteHigh = Math.max(...allHighs);
-const absoluteLow = Math.min(...allLows);
+// 計算1836.15數律核心線
 const coreValue = CONFIG.coreNumber;
-const exp = Math.floor(Math.log10(absoluteHigh / coreValue));
+const lastPrice = modelData[modelData.length - 1].c;
+const exp = Math.floor(Math.log10(lastPrice / coreValue));
 const scaledCore = coreValue * Math.pow(10, exp);
 
-priceChart = new Chart(ctx, {
-type: 'candlestick',
-data: {
-datasets: [
+// 動態追蹤歷史高低位 - 實現您的邏輯
+// 第一次出現高位時記錄,然後從那天的最高價開始畫線延續
+const historicalHighs = [];
+const historicalLows = [];
+let currentHigh = 0;
+let currentHighStartIndex = 0;
+let currentLow = Infinity;
+let currentLowStartIndex = 0;
+
+modelData.forEach((bar, index) => {
+  // 追蹤歷史高點
+  if (bar.h > currentHigh) {
+    if (currentHigh > 0) {
+      // 記錄前一個高點區間
+      historicalHighs.push({
+        value: currentHigh,
+        startIndex: currentHighStartIndex,
+        endIndex: index - 1
+      });
+    }
+    currentHigh = bar.h;
+    currentHighStartIndex = index;
+  }
+
+  // 追蹤歷史低點
+  if (bar.l < currentLow) {
+    if (currentLow < Infinity) {
+      // 記錄前一個低點區間
+      historicalLows.push({
+        value: currentLow,
+        startIndex: currentLowStartIndex,
+        endIndex: index - 1
+      });
+    }
+    currentLow = bar.l;
+    currentLowStartIndex = index;
+  }
+});
+
+// 添加最後一個區間
+if (currentHigh > 0) {
+  historicalHighs.push({
+    value: currentHigh,
+    startIndex: currentHighStartIndex,
+    endIndex: modelData.length - 1
+  });
+}
+if (currentLow < Infinity) {
+  historicalLows.push({
+    value: currentLow,
+    startIndex: currentLowStartIndex,
+    endIndex: modelData.length - 1
+  });
+}
+
+// 構建數據集
+const datasets = [
 {
 label: 'K線',
 data: dataToRender.map(d => ({ x: d.timestamp, o: d.o, h: d.h, l: d.l, c: d.c })),
@@ -627,16 +677,6 @@ color: { up: '#10b981', down: '#ef4444', unchanged: '#666' }
 label: '1836.15核心線',
 data: dataToRender.map(d => ({ x: d.timestamp, y: scaledCore })),
 type: 'line', borderColor: '#8b5cf6', borderWidth: 3, pointRadius: 0
-},
-{
-label: '歷史最高位',
-data: dataToRender.map(d => ({ x: d.timestamp, y: absoluteHigh })),
-type: 'line', borderColor: '#ff0000', borderWidth: 1, borderDash: [8,4], pointRadius: 0
-},
-{
-label: '歷史最低位',
-data: dataToRender.map(d => ({ x: d.timestamp, y: absoluteLow })),
-type: 'line', borderColor: '#00ff00', borderWidth: 1, borderDash: [8,4], pointRadius: 0
 },
 {
 label: '動態強支撐',
@@ -658,7 +698,56 @@ label: '賣出信號',
 data: dataToRender.filter(d => d.sellSignal).map(d => ({ x: d.timestamp, y: d.h * 1.02 })),
 type: 'scatter', backgroundColor: '#ff0000', pointRadius: 8, pointStyle: 'triangle', rotation: 180, borderColor: '#fff', borderWidth: 1
 }
-]
+];
+
+// 添加動態歷史高點線段
+historicalHighs.forEach((high, idx) => {
+  const segmentData = [];
+  for (let i = high.startIndex; i <= Math.min(high.endIndex, dataToRender.length - 1); i++) {
+    segmentData.push({ x: modelData[i].timestamp, y: high.value });
+  }
+  if (segmentData.length > 0) {
+    datasets.push({
+      label: `歷史高點 ${(high.value * CONFIG.ratio).toFixed(4)}`,
+      data: segmentData,
+      type: 'line',
+      borderColor: idx % 2 === 0 ? '#ff0000' : '#ff6666',
+      borderWidth: 2,
+      borderDash: [8, 4],
+      pointRadius: 0,
+      segment: {
+        borderColor: ctx => idx === historicalHighs.length - 1 ? '#ff0000' : '#ff6666'
+      }
+    });
+  }
+});
+
+// 添加動態歷史低點線段
+historicalLows.forEach((low, idx) => {
+  const segmentData = [];
+  for (let i = low.startIndex; i <= Math.min(low.endIndex, dataToRender.length - 1); i++) {
+    segmentData.push({ x: modelData[i].timestamp, y: low.value });
+  }
+  if (segmentData.length > 0) {
+    datasets.push({
+      label: `歷史低點 ${(low.value * CONFIG.ratio).toFixed(4)}`,
+      data: segmentData,
+      type: 'line',
+      borderColor: idx % 2 === 0 ? '#00ff00' : '#66ff66',
+      borderWidth: 2,
+      borderDash: [8, 4],
+      pointRadius: 0,
+      segment: {
+        borderColor: ctx => idx === historicalLows.length - 1 ? '#00ff00' : '#66ff66'
+      }
+    });
+  }
+});
+
+priceChart = new Chart(ctx, {
+type: 'candlestick',
+data: {
+datasets: datasets
 },
 options: {
 responsive: true,

@@ -5,7 +5,7 @@ import requests
 import os
 
 app = Flask(__name__, static_folder='./')
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization", "x-api-key", "anthropic-version"]}})
 
 # ===================== 復刻GitHub項目的東方財富數據接口 =====================
 @app.route('/api/kline', methods=['GET'])
