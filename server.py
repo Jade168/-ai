@@ -43,6 +43,35 @@ def get_kline():
     except Exception as e:
         return jsonify({"code": -1, "msg": f"數據獲取失敗：{str(e)}"}), 500
 
+# ===================== AI API代理（解決CORS問題）=====================
+@app.route('/api/ai-proxy', methods=['POST'])
+def ai_proxy():
+    """代理AI API請求，避免瀏覽器CORS限制"""
+    try:
+        data = request.json
+        api_url = data.get('url')
+        api_headers = data.get('headers', {})
+        api_body = data.get('body', {})
+
+        response = requests.post(api_url, headers=api_headers, json=api_body, timeout=30)
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ===================== 新聞API代理（解決CORS問題）=====================
+@app.route('/api/news-proxy', methods=['GET'])
+def news_proxy():
+    """代理新聞API請求，避免瀏覽器CORS限制"""
+    try:
+        symbol = request.args.get('symbol', '^GSPC')
+        limit = request.args.get('limit', '5')
+        url = f"https://api.akquant.cn/v1/market/news?symbol={symbol}&limit={limit}"
+
+        response = requests.get(url, timeout=10)
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({"code": -1, "msg": str(e)}), 500
+
 # ===================== 復刻GitHub項目的定時任務 =====================
 def daily_analysis_task():
     """每日定時自動分析自選股，同GitHub項目嘅定時推送邏輯一致"""

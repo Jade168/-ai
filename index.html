@@ -474,19 +474,24 @@ async function analyzeNewsSentiment(newsList, symbol) {
 if (newsList.length === 0) return "中性";
 try {
 const newsContent = newsList.map(n => `標題：${n.title} 時間：${n.time}`).join('\n');
-const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+// 使用本地後端代理，避免CORS問題
+const response = await fetch('/api/ai-proxy', {
 method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
 headers: {
-'Authorization': `Bearer 446ec69558b346a18dbd20849b90ab9f`,
+'Authorization': 'Bearer 446ec69558b346a18dbd20849b90ab9f',
 'Content-Type': 'application/json'
 },
-body: JSON.stringify({
+body: {
 model: "glm-4-flash",
 messages: [
 { role: 'system', content: '你是財經情感分析專家，只需要返回「利好」「利空」「中性」三個結果中的一個，不要其他內容' },
 { role: 'user', content: `分析以下${symbol}的最新新聞，判斷整體情感：\n${newsContent}` }
 ],
 temperature: 0.1
+}
 })
 });
 const result = await response.json();
@@ -611,60 +616,44 @@ const lastPrice = modelData[modelData.length - 1].c;
 const exp = Math.floor(Math.log10(lastPrice / coreValue));
 const scaledCore = coreValue * Math.pow(10, exp);
 
-// 動態追蹤歷史高低位 - 實現您的邏輯
-// 第一次出現高位時記錄,然後從那天的最高價開始畫線延續
-const historicalHighs = [];
-const historicalLows = [];
-let currentHigh = 0;
-let currentHighStartIndex = 0;
-let currentLow = Infinity;
-let currentLowStartIndex = 0;
+// 神奇九轉風格：小框框標記高低位
+// 當價格創新高/新低且符合1836.15比例時，畫一個小框框標記
+const highBoxMarkers = [];
+const lowBoxMarkers = [];
+let runningHigh = 0;
+let runningLow = Infinity;
 
 modelData.forEach((bar, index) => {
-  // 追蹤歷史高點
-  if (bar.h > currentHigh) {
-    if (currentHigh > 0) {
-      // 記錄前一個高點區間
-      historicalHighs.push({
-        value: currentHigh,
-        startIndex: currentHighStartIndex,
-        endIndex: index - 1
+  // 檢查是否創新高
+  if (bar.h > runningHigh) {
+    runningHigh = bar.h;
+    // 檢查是否符合1836.15比例（歸元數為3、6、9）
+    const digitSum = String(Math.floor(bar.h)).split('').reduce((a, b) => parseInt(a) + parseInt(b), 0);
+    const yuanNumber = digitSum % 9 || 9;
+    if ([3, 6, 9].includes(yuanNumber)) {
+      highBoxMarkers.push({
+        timestamp: bar.timestamp,
+        price: bar.h,
+        index: index
       });
     }
-    currentHigh = bar.h;
-    currentHighStartIndex = index;
   }
 
-  // 追蹤歷史低點
-  if (bar.l < currentLow) {
-    if (currentLow < Infinity) {
-      // 記錄前一個低點區間
-      historicalLows.push({
-        value: currentLow,
-        startIndex: currentLowStartIndex,
-        endIndex: index - 1
+  // 檢查是否創新低
+  if (bar.l < runningLow) {
+    runningLow = bar.l;
+    // 檢查是否符合1836.15比例（歸元數為3、6、9）
+    const digitSum = String(Math.floor(bar.l)).split('').reduce((a, b) => parseInt(a) + parseInt(b), 0);
+    const yuanNumber = digitSum % 9 || 9;
+    if ([3, 6, 9].includes(yuanNumber)) {
+      lowBoxMarkers.push({
+        timestamp: bar.timestamp,
+        price: bar.l,
+        index: index
       });
     }
-    currentLow = bar.l;
-    currentLowStartIndex = index;
   }
 });
-
-// 添加最後一個區間
-if (currentHigh > 0) {
-  historicalHighs.push({
-    value: currentHigh,
-    startIndex: currentHighStartIndex,
-    endIndex: modelData.length - 1
-  });
-}
-if (currentLow < Infinity) {
-  historicalLows.push({
-    value: currentLow,
-    startIndex: currentLowStartIndex,
-    endIndex: modelData.length - 1
-  });
-}
 
 // 構建數據集
 const datasets = [
@@ -700,46 +689,76 @@ type: 'scatter', backgroundColor: '#ff0000', pointRadius: 8, pointStyle: 'triang
 }
 ];
 
-// 添加動態歷史高點線段
-historicalHighs.forEach((high, idx) => {
-  const segmentData = [];
-  for (let i = high.startIndex; i <= Math.min(high.endIndex, dataToRender.length - 1); i++) {
-    segmentData.push({ x: modelData[i].timestamp, y: high.value });
-  }
-  if (segmentData.length > 0) {
+// 添加神奇九轉風格的高位小框框標記
+highBoxMarkers.forEach((marker, idx) => {
+  if (marker.index <= dataToRender.length - 1) {
+    const priceRange = runningHigh - runningLow;
+    const boxHeight = priceRange * 0.015; // 小框框高度為價格範圍的1.5%
     datasets.push({
-      label: `歷史高點 ${(high.value * CONFIG.ratio).toFixed(4)}`,
-      data: segmentData,
+      label: `高位標記 ${marker.price.toFixed(2)}`,
+      data: [
+        { x: marker.timestamp, y: marker.price },
+        { x: marker.timestamp, y: marker.price + boxHeight }
+      ],
       type: 'line',
-      borderColor: idx % 2 === 0 ? '#ff0000' : '#ff6666',
-      borderWidth: 2,
-      borderDash: [8, 4],
+      borderColor: '#ff0000',
+      borderWidth: 3,
       pointRadius: 0,
-      segment: {
-        borderColor: ctx => idx === historicalHighs.length - 1 ? '#ff0000' : '#ff6666'
-      }
+      fill: false
+    });
+    // 添加水平短線作為框框頂部和底部
+    datasets.push({
+      label: '',
+      data: [{ x: marker.timestamp, y: marker.price }],
+      type: 'scatter',
+      backgroundColor: '#ff0000',
+      pointRadius: 4,
+      pointStyle: 'rect'
+    });
+    datasets.push({
+      label: '',
+      data: [{ x: marker.timestamp, y: marker.price + boxHeight }],
+      type: 'scatter',
+      backgroundColor: '#ff0000',
+      pointRadius: 4,
+      pointStyle: 'rect'
     });
   }
 });
 
-// 添加動態歷史低點線段
-historicalLows.forEach((low, idx) => {
-  const segmentData = [];
-  for (let i = low.startIndex; i <= Math.min(low.endIndex, dataToRender.length - 1); i++) {
-    segmentData.push({ x: modelData[i].timestamp, y: low.value });
-  }
-  if (segmentData.length > 0) {
+// 添加神奇九轉風格的低位小框框標記
+lowBoxMarkers.forEach((marker, idx) => {
+  if (marker.index <= dataToRender.length - 1) {
+    const priceRange = runningHigh - runningLow;
+    const boxHeight = priceRange * 0.015; // 小框框高度為價格範圍的1.5%
     datasets.push({
-      label: `歷史低點 ${(low.value * CONFIG.ratio).toFixed(4)}`,
-      data: segmentData,
+      label: `低位標記 ${marker.price.toFixed(2)}`,
+      data: [
+        { x: marker.timestamp, y: marker.price },
+        { x: marker.timestamp, y: marker.price - boxHeight }
+      ],
       type: 'line',
-      borderColor: idx % 2 === 0 ? '#00ff00' : '#66ff66',
-      borderWidth: 2,
-      borderDash: [8, 4],
+      borderColor: '#00ff00',
+      borderWidth: 3,
       pointRadius: 0,
-      segment: {
-        borderColor: ctx => idx === historicalLows.length - 1 ? '#00ff00' : '#66ff66'
-      }
+      fill: false
+    });
+    // 添加水平短線作為框框頂部和底部
+    datasets.push({
+      label: '',
+      data: [{ x: marker.timestamp, y: marker.price }],
+      type: 'scatter',
+      backgroundColor: '#00ff00',
+      pointRadius: 4,
+      pointStyle: 'rect'
+    });
+    datasets.push({
+      label: '',
+      data: [{ x: marker.timestamp, y: marker.price - boxHeight }],
+      type: 'scatter',
+      backgroundColor: '#00ff00',
+      pointRadius: 4,
+      pointStyle: 'rect'
     });
   }
 });
@@ -762,18 +781,22 @@ ticks: { color: '#999' }
 y: {
 position: 'right',
 grid: { color: '#222' },
-ticks: { color: '#999' }
+ticks: {
+color: '#999',
+callback: function(value) {
+return value.toFixed(2);
+}
+},
+beginAtZero: false
 }
 },
 plugins: {
 zoom: {
-pan: { enabled: true, mode: 'x' },
-zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+pan: { enabled: true, mode: 'xy' },
+zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' }
 },
 legend: {
-display: true,
-position: 'top',
-labels: { color: '#fff', font: { size: 10 } }
+display: false  // 隱藏圖表上方的圖例
 },
 tooltip: {
 enabled: true,
@@ -1119,16 +1142,17 @@ ${globalHotNews.length > 0 ?
 
     let response, result, reply;
 
+    // 使用本地後端代理，避免CORS問題
     if (apiConfig.provider === 'claude') {
       // Claude API調用格式
-      response = await fetch(apiConfig.url, {
-        method: 'POST',
+      const proxyBody = {
+        url: apiConfig.url,
         headers: {
           'x-api-key': apiConfig.key,
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
+        body: {
           model: "claude-3-5-sonnet-20241022",
           max_tokens: 4096,
           system: CONFIG.systemPrompt,
@@ -1136,20 +1160,25 @@ ${globalHotNews.length > 0 ?
             { role: 'user', content: `${input}\n\n【真實市場數據上下文】：${context}` }
           ],
           temperature: 0.3
-        })
+        }
+      };
+      response = await fetch('/api/ai-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(proxyBody)
       });
       result = await response.json();
       if (!result.content) throw new Error(`Claude API錯誤：${result.error?.message || '未知錯誤'}`);
       reply = result.content[0].text;
     } else {
       // Gemini/自定義API (OpenAI格式)
-      response = await fetch(apiConfig.url, {
-        method: 'POST',
+      const proxyBody = {
+        url: apiConfig.url,
         headers: {
           'Authorization': `Bearer ${apiConfig.key}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
+        body: {
           model: apiConfig.provider === 'gemini' ? "gemini-2.0-flash-exp" : "gpt-4",
           messages: [
             { role: 'system', content: CONFIG.systemPrompt },
@@ -1157,7 +1186,12 @@ ${globalHotNews.length > 0 ?
           ],
           temperature: 0.3,
           stream: false
-        })
+        }
+      };
+      response = await fetch('/api/ai-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(proxyBody)
       });
       result = await response.json();
       if (!result.choices) throw new Error(`API錯誤：${result.error?.message || '未知錯誤'}`);
@@ -1326,17 +1360,13 @@ const container = document.getElementById('hotNewsContainer');
 container.innerHTML = '<div style="color:#ffd700; text-align:center; padding:8px">🔄 正在抓取全球財經熱點...</div>';
 
 try {
-// 使用多個數據源抓取熱點新聞
-const sources = [
-'https://api.akquant.cn/v1/market/news?symbol=^GSPC&limit=5', // 美股
-'https://api.akquant.cn/v1/market/news?symbol=000001.SH&limit=5', // A股
-'https://api.akquant.cn/v1/market/news?symbol=00700.HK&limit=5'  // 港股
-];
+// 使用本地後端代理抓取新聞，避免CORS問題
+const symbols = ['^GSPC', '000001.SH', '00700.HK'];
 
 const allNews = [];
-for (const url of sources) {
+for (const symbol of symbols) {
 try {
-const response = await fetch(url);
+const response = await fetch(`/api/news-proxy?symbol=${symbol}&limit=5`);
 if (response.ok) {
 const result = await response.json();
 if (result.code === 0 && result.data) {
@@ -1386,20 +1416,24 @@ const news = globalHotNews[newsIndex];
 addChatMessage('system', `📰 正在分析新聞影響：${news.title}`);
 
 try {
-// 使用智譜AI快速分析新聞影響
-const response = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+// 使用本地後端代理調用智譜AI，避免CORS問題
+const response = await fetch('/api/ai-proxy', {
 method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify({
+url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
 headers: {
 'Authorization': 'Bearer 446ec69558b346a18dbd20849b90ab9f',
 'Content-Type': 'application/json'
 },
-body: JSON.stringify({
+body: {
 model: "glm-4-flash",
 messages: [
 { role: 'system', content: '你是財經新聞分析專家，用粵語簡潔分析新聞對股市的影響，只需要3-5句話，包括：1.事件性質 2.影響板塊 3.利好/利空判斷' },
 { role: 'user', content: `分析以下新聞：\n標題：${news.title}\n時間：${news.time}` }
 ],
 temperature: 0.2
+}
 })
 });
 
