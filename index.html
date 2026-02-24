@@ -156,7 +156,8 @@ button:active{transform:scale(0.98)}
 <option value="forex">外匯</option>
 <option value="crypto">加密</option>
 </select>
-<input id="fund" type="number" value="100000" placeholder="本金" style="width:20%">
+<input id="fund" type="number" value="100000" placeholder="本金" style="width:15%">
+<input id="buyPrice" type="number" step="0.01" placeholder="買入價(可選)" style="width:20%">
 </div>
 <div class="row">
 <input id="coreInt" value="1836.15" step="0.01" placeholder="核心數" style="width:25%">
@@ -193,6 +194,11 @@ button:active{transform:scale(0.98)}
 <span id="support-line1" class="tag-win">強支撐：--</span>
 <span id="support-line2" class="tag">弱支撐：--</span>
 <span id="resistance-line" class="tag-sharpe">阻力：--</span>
+</div>
+<!-- 新增：369 + 142857 複合共振分析顯示區 -->
+<div id="resonance-area" style="display:none; margin-top:6px; padding:8px; background:linear-gradient(135deg,#1a0b2e,#0d1b2a); border-radius:6px; border:1px solid #8b5cf6;">
+<div style="color:#8b5cf6; font-weight:bold; margin-bottom:6px;">🔮 369 + 142857 複合共振分析</div>
+<div id="resonance-results" style="font-size:11px; line-height:1.6;"></div>
 </div>
 <div class="row" id="news-sentiment" style="display:none">
 <span class="tag" style="background:rgba(255,215,0,0.2); color:#ffd700">新聞情感：<span id="sentiment-text">中性</span></span>
@@ -504,6 +510,134 @@ return sentiment;
 console.error('情感分析失敗', error);
 return "中性";
 }
+}
+
+// ===================== 369 + 142857 複合共振分析 =====================
+function calculate369And142857(lastPrice, buyPrice = null) {
+  const price = buyPrice || lastPrice;
+
+  // 142857 循環計算
+  const r142857 = {
+    strongResist: price * 1.142857,  // 1.14倍
+    midResist: price * 1.285714,     // 1.28倍
+    strongSupport: price * 0.714285, // 0.71倍
+    midSupport: price * 0.857143,    // 0.86倍
+    base: price
+  };
+
+  // 369 歸元數計算
+  function getGuiYuan(num) {
+    const sum = String(Math.floor(num)).split('').reduce((a, b) => parseInt(a) + parseInt(b), 0);
+    return sum % 9 || 9;
+  }
+
+  const currentGuiYuan = getGuiYuan(lastPrice);
+  const buyGuiYuan = buyPrice ? getGuiYuan(buyPrice) : null;
+
+  // 歷史高低位歸元數（估算）
+  const highGuiYuan = getGuiYuan(lastPrice * 1.2);  // 假設高20%
+  const lowGuiYuan = getGuiYuan(lastPrice * 0.8);    // 假設低20%
+
+  // 判斷信號
+  let signal = "⚖️ 觀望";
+  let action = "";
+
+  // 價格接近142857支撐 + 369共振
+  if (lastPrice <= r142857.midSupport && (currentGuiYuan === 3 || currentGuiYuan === 6 || currentGuiYuan === 9)) {
+    signal = "🟢 強烈買入";
+    action = "價格接近142857支撐 + 369歸元共振";
+  } else if (lastPrice <= r142857.midSupport) {
+    signal = "🟢 買入";
+    action = "價格接近142857支撐區";
+  } else if (lastPrice >= r142857.strongResist && (currentGuiYuan === 3 || currentGuiYuan === 6 || currentGuiYuan === 9)) {
+    signal = "🔴 強烈賣出";
+    action = "價格接近142857阻力 + 369歸元共振";
+  } else if (lastPrice >= r142857.strongResist) {
+    signal = "🔴 賣出";
+    action = "價格接近142857阻力區";
+  }
+
+  return {
+    r142857,
+    guiYuan: {
+      current: currentGuiYuan,
+      buy: buyGuiYuan,
+      high: highGuiYuan,
+      low: lowGuiYuan
+    },
+    signal,
+    action,
+    suggestions: {
+      buyZone: r142857.midSupport.toFixed(2),
+      strongBuy: r142857.strongSupport.toFixed(2),
+      sellZone: r142857.strongResist.toFixed(2),
+      target1: (r142857.strongResist).toFixed(2),
+      target2: (r142857.midResist).toFixed(2),
+      stopLoss: (r142857.strongSupport * 0.9).toFixed(2)
+    }
+  };
+}
+
+// 顯示369+142857分析結果
+function displayResonanceAnalysis(analysis, lastPrice, buyPrice = null) {
+  const area = document.getElementById('resonance-area');
+  const results = document.getElementById('resonance-results');
+
+  if (!area || !results) return;
+
+  area.style.display = 'block';
+
+  const price = buyPrice || lastPrice;
+
+  let html = `
+<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-bottom:6px;">
+<div style="background:#111; padding:4px; border-radius:4px; text-align:center;">
+<div style="color:#666; font-size:9px;">現價</div>
+<div style="color:#fff; font-weight:bold;">$${lastPrice.toFixed(2)}</div>
+<div style="color:#8b5cf6; font-size:9px;">歸元${analysis.guiYuan.current}</div>
+</div>
+<div style="background:#111; padding:4px; border-radius:4px; text-align:center;">
+<div style="color:#666; font-size:9px;">142857支撐</div>
+<div style="color:#10b981; font-weight:bold;">$${analysis.suggestions.strongBuy}</div>
+<div style="color:#666; font-size:9px;">0.71倍</div>
+</div>
+<div style="background:#111; padding:4px; border-radius:4px; text-align:center;">
+<div style="color:#666; font-size:9px;">142857阻力</div>
+<div style="color:#ef4444; font-weight:bold;">$${analysis.suggestions.sellZone}</div>
+<div style="color:#666; font-size:9px;">1.14倍</div>
+</div>
+</div>
+<div style="background:#222; padding:6px; border-radius:4px; margin-bottom:6px; text-align:center;">
+<div style="color:${analysis.signal.includes('買') ? '#10b981' : analysis.signal.includes('賣') ? '#ef4444' : '#ffd700'}; font-weight:bold; font-size:13px;">${analysis.signal}</div>
+<div style="color:#999; font-size:10px;">${analysis.action}</div>
+</div>
+<div style="display:grid; grid-template-columns:repeat(2,1fr); gap:4px;">
+<div style="background:#1a2e1a; padding:4px; border-radius:4px; border-left:3px solid #10b981;">
+<div style="color:#10b981; font-size:9px;">🟢 溝貨區</div>
+<div style="color:#fff; font-size:11px;">$${analysis.suggestions.buyZone} - $${analysis.suggestions.strongBuy}</div>
+</div>
+<div style="background:#2e1a1a; padding:4px; border-radius:4px; border-left:3px solid #ef4444;">
+<div style="color:#ef4444; font-size:9px;">🔴 賣出區</div>
+<div style="color:#fff; font-size:11px;">$${analysis.suggestions.sellZone} - $${analysis.suggestions.target2}</div>
+</div>
+</div>
+<div style="margin-top:6px; padding:4px; background:#111; border-radius:4px; font-size:10px;">
+<div style="color:#666;">📋 操作建議：</div>
+<div style="color:#10b981;">買入：$${analysis.suggestions.strongBuy} | 目標1：$${analysis.suggestions.target1}</div>
+<div style="color:#ffd700;">止蝕：$${analysis.suggestions.stopLoss}</div>
+</div>
+  `;
+
+  if (buyPrice) {
+    html += `
+<div style="margin-top:6px; padding:4px; background:#1a0b2e; border-radius:4px; font-size:10px; border:1px solid #8b5cf6;">
+<div style="color:#8b5cf6;">💰 你的買入價：$${buyPrice} (歸元${analysis.guiYuan.buy})</div>
+<div style="color:${lastPrice < buyPrice ? '#10b981' : '#ef4444'};">${lastPrice < buyPrice ? '✅ 錯價！可以溝貨' : '❌ 高於買入價'}</div>
+</div>
+    `;
+  }
+
+  results.innerHTML = html;
 }
 
 function calculateModel(rawData, coreNum, sentiment = "中性") {
@@ -1243,6 +1377,12 @@ document.getElementById('core-line').textContent = `核心線：${lastBar.coreGr
 document.getElementById('support-line1').textContent = `強支撐：${lastBar.supportLine1.toFixed(2)}`;
 document.getElementById('support-line2').textContent = `弱支撐：${lastBar.supportLine2.toFixed(2)}`;
 document.getElementById('resistance-line').textContent = `阻力：${lastBar.resistanceLine.toFixed(2)}`;
+
+// 顯示369+142857複合共振分析
+const userBuyPrice = document.getElementById('buyPrice').value ? parseFloat(document.getElementById('buyPrice').value) : null;
+const resonanceAnalysis = calculate369And142857(lastBar.c, userBuyPrice);
+displayResonanceAnalysis(resonanceAnalysis, lastBar.c, userBuyPrice);
+
 const signalEl = document.getElementById('signal');
 if (lastBar.buySignal) {
 signalEl.className = 'signal sig-buy'; signalEl.innerText = '📈 歸元買入信號';
