@@ -1394,7 +1394,34 @@ signalEl.className = 'signal sig-neutral'; signalEl.innerText = '⚖️ 震盪�
 document.getElementById('logContainer').innerHTML = logs.map(l => 
 `<div style="color:${l.type === 'buy' ? '#10b981' : '#ef4444'}; margin:2px 0">${l.msg}</div>`
 ).join('');
-addChatMessage('ai', `✅ ${symbol} 分析完成！\n總收益率: ${stats.totalReturn}%\n勝率: ${stats.winRate}%\n最新新聞情感: ${sentiment}\n點擊「回放回測」可觀看交易過程。`);
+// 生成 AI 建議訊息
+const aiSuggestion = `📊 ${symbol} 369+142857 複合共振分析：
+
+【現價位置】
+🔺 現價: $${lastBar.c.toFixed(2)} | 歸元數: ${resonanceAnalysis.guiYuan.current}
+
+【142857 循環位】
+🟢 溝貨區: $${resonanceAnalysis.suggestions.strongBuy} - $${resonanceAnalysis.suggestions.buyZone}
+🔴 賣出區: $${resonanceAnalysis.suggestions.sellZone} - $${resonanceAnalysis.suggestions.target2}
+
+【操作建議】
+✅ 買入: $${resonanceAnalysis.suggestions.strongBuy}
+🎯 目標1: $${resonanceAnalysis.suggestions.target1}
+🎯 目標2: $${resonanceAnalysis.suggestions.target2}
+🛡️ 止蝕: $${resonanceAnalysis.suggestions.stopLoss}
+
+【信號判斷】${resonanceAnalysis.signal} - ${resonanceAnalysis.action}
+
+【1836.15 數律】
+核心線: ${lastBar.coreGravityLine.toFixed(2)}
+強支撐: ${lastBar.supportLine1.toFixed(2)}
+弱支撐: ${lastBar.supportLine2.toFixed(2)}
+阻力: ${lastBar.resistanceLine.toFixed(2)}
+
+【回測數據】
+總收益率: ${stats.totalReturn}% | 勝率: ${stats.winRate}%`;
+
+addChatMessage('ai', aiSuggestion);
 }
 
 async function runBatchScan() {
