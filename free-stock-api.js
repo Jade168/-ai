@@ -1,151 +1,131 @@
-// 免费数据源核心：直接对接东方财富公开API，无需本地服务器，完整兼容1836系统
-window.FreeStockAPI = {
-    // 1. 核心取K线数据：兼容你原有系统的入参和出参格式
-    getKlineData: async (symbol, period = 'daily') => {
-        // 适配你的代码：自动识别港股/A股/美股代码格式
-        let secid = '';
-        if (symbol.match(/^[0-9]{5}$/)) {
-            secid = `116.${symbol}`; // 港股
-        } else if (symbol.match(/^(6|0|3)[0-9]{5}$/)) {
-            secid = symbol.startsWith('6') ? `1.${symbol}` : `0.${symbol}`; // A股
-        } else {
-            secid = `105.${symbol.toUpperCase()}`; // 美股
-        }
-
-        // 时间周期映射：完全匹配你原有系统的 period 参数
-        const kltMap = {
-            'daily': '101',
-            'weekly': '102',
-            '5min': '5'
+// 开源新闻模块：独立运行，只负责拉取新闻，不干扰东方财富K线
+window.FreeNewsAPI = {
+    // 1. 适配股票代码，生成新闻检索关键词
+    getNewsKeyword: (symbol) => {
+        const nameMap = {
+            '9888': '腾讯控股',
+            '00700': '腾讯控股',
+            'TSLA': '特斯拉',
+            'NVDA': '英伟达',
+            'AAPL': '苹果',
+            'DIS': '迪士尼'
         };
-        const klt = kltMap[period] || '101';
+        return nameMap[symbol] || symbol;
+    },
 
-        // 东方财富公开K线接口（无跨域限制，直接可用）
-        const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=0&end=20500101&lmt=300`;
+    // 2. 拉取开源新闻（新浪财经+百度新闻，无跨域，公开可用）
+    fetchNews: async (symbol) => {
+        const keyword = this.getNewsKeyword(symbol);
+        if (!keyword) return { code: -1, msg: '未找到对应股票', data: [] };
+
+        // 新浪财经新闻接口（开源，无跨域）
+        const sinaNewsUrl = `https://news.sina.cn/2020/more/news_search.php?keyword=${encodeURIComponent(keyword)}&num=10`;
+        // 百度新闻接口（补充来源）
+        const baiduNewsUrl = `https://news.baidu.com/ns?word=${encodeURIComponent(keyword)}&tn=news&rn=10`;
 
         try {
-            const response = await fetch(url);
-            const result = await response.json();
+            // 并行拉取两个新闻源
+            const [sinaRes, baiduRes] = await Promise.all([
+                fetch(sinaNewsUrl).then(res => res.text()),
+                fetch(baiduNewsUrl).then(res => res.text())
+            ]);
 
-            // 格式转换：转成你原有系统能识别的数组格式
-            if (result.data && result.data.klines) {
-                return {
-                    code: 0,
-                    data: result.data.klines, // 直接传给fullRawData
-                    name: result.data.name || symbol, // 股票名称
-                    msg: '成功'
-                };
-            } else {
-                return { code: -1, msg: '免费数据源无数据', data: [] };
-            }
-        } catch (error) {
-            return { code: -1, msg: `接口异常: ${error.message}`, data: [] };
-        }
-    },
+            // 解析新浪新闻（HTML 提取）
+            const sinaNews = this.parseSinaNews(sinaRes);
+            // 解析百度新闻（HTML 提取）
+            const baiduNews = this.parseBaiduNews(baiduRes);
 
-    // 2. 适配你原有系统的切换逻辑：真正接管数据拉取
-    takeOver: async () => {
-        const symbol = document.getElementById('symbol').value.trim();
-        const period = document.getElementById('period').value || 'daily';
-        const loading = document.getElementById('loading');
-
-        if (!symbol) {
-            addChatMessage('chat-error', '❌ 请输入股票代码');
-            return false;
-        }
-
-        loading.classList.add('show');
-        loading.textContent = `📡 免费数据源拉取 ${symbol} 数据中...`;
-
-        // 真正拉取数据
-        const klineRes = await window.FreeStockAPI.getKlineData(symbol, period);
-        if (klineRes.code !== 0 || klineRes.data.length === 0) {
-            loading.textContent = `❌ 拉取失败: ${klineRes.msg}`;
-            loading.classList.remove('show');
-            addChatMessage('chat-error', `❌ 免费数据源失败: ${klineRes.msg}`);
-            return false;
-        }
-
-        // 关键：把数据注入你原有系统的全局变量
-        window.fullRawData = klineRes.data;
-        window.currentSymbolInfo = {
-            name: klineRes.name,
-            code: symbol
-        };
-
-        loading.textContent = `✅ 免费数据源加载完成，共 ${klineRes.data.length} 条K线`;
-        loading.classList.remove('show');
-        addChatMessage('chat-system', `✅ 已切换至免费数据源，股票：${klineRes.name}(${symbol})`);
-
-        // 触发你原有系统的核心分析（1836.15数律模型）
-        if (typeof window.runQuantAnalysisOriginal === 'function') {
-            window.runQuantAnalysisOriginal();
-        } else {
-            // 兼容首次加载：直接执行原有分析逻辑
-            window.runQuantAnalysis();
-        }
-
-        return true;
-    }
-};
-
-// 初始化数据源配置：修复之前的全局变量问题
-window.DataSourceConfig = {
-    currentSource: 'eastmoney',
-    availableSources: {
-        'eastmoney': '東方財富數據源（本地）',
-        'free': '免費數據源（公開接口）'
-    },
-
-    // 真正的切换逻辑：点击下拉框立即生效
-    switchSource: async (source) => {
-        if (!window.DataSourceConfig.availableSources[source]) return;
-        window.DataSourceConfig.currentSource = source;
-        localStorage.setItem('data_source', source);
-
-        // 关键：如果是免费数据源，直接接管取数；否则恢复原有逻辑
-        if (source === 'free') {
-            // 备份原有分析函数，防止重复覆盖
-            if (!window.runQuantAnalysisOriginal) {
-                window.runQuantAnalysisOriginal = window.runQuantAnalysis;
-            }
-            // 强制使用免费数据源取数
-            await window.FreeStockAPI.takeOver();
-        } else {
-            // 切回东方财富：恢复原有本地取数逻辑
-            if (window.runQuantAnalysisOriginal) {
-                window.runQuantAnalysis = window.runQuantAnalysisOriginal;
-            }
-            // 重新触发原有分析（需本地server）
-            if (document.getElementById('symbol').value) {
-                window.runQuantAnalysis();
-            }
-        }
-
-        // 更新下拉框显示
-        const select = document.getElementById('data-source-select');
-        if (select) select.value = source;
-    },
-
-    init: () => {
-        const saved = localStorage.getItem('data_source');
-        if (saved && window.DataSourceConfig.availableSources[saved]) {
-            window.DataSourceConfig.currentSource = saved;
-        }
-    }
-};
-
-// 页面加载时初始化
-document.addEventListener('DOMContentLoaded', () => {
-    window.DataSourceConfig.init();
-    // 给下拉框绑定正确的事件（修复之前的绑定失效）
-    setTimeout(() => {
-        const select = document.getElementById('data-source-select');
-        if (select) {
-            select.onchange = (e) => {
-                window.DataSourceConfig.switchSource(e.target.value);
+            // 合并去重
+            const allNews = [...sinaNews, ...baiduNews].slice(0, 10);
+            return {
+                code: 0,
+                data: allNews,
+                msg: `成功拉取 ${allNews.length} 条关于「${keyword}」的新闻`
             };
-            select.value = window.DataSourceConfig.currentSource;
+        } catch (error) {
+            return { code: -1, msg: `新闻拉取失败: ${error.message}`, data: [] };
         }
-    }, 500);
+    },
+
+    // 3. 解析新浪新闻HTML
+    parseSinaNews: (html) => {
+        const news = [];
+        const regex = /<li><a href="([^"]+)" target="_blank">([^<]+)<\/a><span>([^<]+)<\/span><\/li>/g;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            news.push({
+                title: match[2],
+                url: match[1],
+                time: match[3],
+                source: '新浪财经'
+            });
+        }
+        return news;
+    },
+
+    // 4. 解析百度新闻HTML
+    parseBaiduNews: (html) => {
+        const news = [];
+        const regex = /<h3 class="c-title"><a href="([^"]+)"[^>]*>([^<]+)<\/a><\/h3>.*?<span class="c-time">([^<]+)<\/span>/g;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            news.push({
+                title: match[2].replace(/<[^>]+>/g, ''), // 去除标签
+                url: match[1],
+                time: match[3],
+                source: '百度新闻'
+            });
+        }
+        return news;
+    },
+
+    // 5. 绑定到你页面的「刷新全球熱點新聞」按钮
+    bindNewsButton: () => {
+        const newsBtn = document.querySelector('button:contains("刷新全球熱點新聞")');
+        if (!newsBtn) return;
+
+        newsBtn.onclick = async () => {
+            const symbol = document.getElementById('symbol').value.trim();
+            if (!symbol) {
+                alert('请先输入股票代码');
+                return;
+            }
+
+            const loadingText = newsBtn.textContent;
+            newsBtn.textContent = '拉取新闻中...';
+            newsBtn.disabled = true;
+
+            const result = await this.fetchNews(symbol);
+            if (result.code === 0 && result.data.length > 0) {
+                // 渲染新闻到页面（替换原有占位区）
+                const newsContainer = document.querySelector('.news-container');
+                if (newsContainer) {
+                    newsContainer.innerHTML = result.data.map(item => `
+                        <div style="margin:8px 0; padding:8px; border-bottom:1px solid #333;">
+                            <a href="${item.url}" target="_blank" style="color:#00a8ff; text-decoration:none;">
+                                ${item.title}
+                            </a>
+                            <div style="font-size:12px; color:#999; margin-top:4px;">
+                                ${item.source} | ${item.time}
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                addChatMessage('chat-system', `✅ ${result.msg}`);
+            } else {
+                addChatMessage('chat-error', `❌ ${result.msg}`);
+            }
+
+            newsBtn.textContent = loadingText;
+            newsBtn.disabled = false;
+        };
+    }
+};
+
+// 页面加载时自动绑定新闻按钮
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        window.FreeNewsAPI.bindNewsButton();
+        addChatMessage('chat-system', '✅ 开源新闻模块已加载，点击「刷新全球熱點新聞」即可拉取资讯');
+    }, 1000);
 });
