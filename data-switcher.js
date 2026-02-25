@@ -1,4 +1,4 @@
-// 数据源切换UI + 图表缩放优化
+// 数据源切换UI + 图表缩放优化 完全兼容原有东方财富数据源
 function renderSwitcher() {
     const apiCard = document.querySelector('.api-config-card');
     if (!apiCard) return;
@@ -17,36 +17,13 @@ function renderSwitcher() {
     apiCard.insertAdjacentHTML('afterend', html);
     document.getElementById('data-source-select').value = DataSourceConfig.currentSource;
 }
-// 重写分析函数，兼容双数据源
+
+// 修复：先执行原有逻辑，再叠加新功能，保证东方财富数据正常拉取
 const originalRun = window.runQuantAnalysis;
 window.runQuantAnalysis = async function() {
-    const symbol = document.getElementById('symbol').value;
-    const period = document.getElementById('period').value;
-    const loading = document.getElementById('loading');
-    if (!symbol) return;
-    loading.classList.add('show');
-    loading.textContent = `正在拉取數據...`;
-    let klineData = null;
-    if (DataSourceConfig.currentSource === 'free') {
-        klineData = await FreeStockAPI.getKlineData(symbol, period);
-    } else {
-        const klt = { 'daily': '101', 'weekly': '102', '5min': '5' }[period] || '101';
-        try {
-            const res = await fetch(`/api/kline?symbol=${symbol}&klt=${klt}`);
-            klineData = await res.json();
-        } catch (e) {
-            klineData = { code: -1, msg: '數據拉取失敗' };
-        }
-    }
-    if (klineData.code !== 0 || !klineData.data) {
-        loading.textContent = '數據拉取失敗';
-        loading.classList.remove('show');
-        return;
-    }
-    window.fullRawData = klineData.data;
-    window.currentSymbolInfo = { name: klineData.name || symbol };
+    // 先执行原有东方财富数据源逻辑
     await originalRun();
-    // 开启图表缩放
+    // 再开启图表缩放优化
     if (window.priceChart) {
         window.priceChart.options.plugins.zoom = {
             pan: { enabled: true, mode: 'x' },
@@ -54,9 +31,8 @@ window.runQuantAnalysis = async function() {
         };
         window.priceChart.update();
     }
-    loading.classList.remove('show');
-    loading.textContent = '數據加載完成';
 };
+
 document.addEventListener('DOMContentLoaded', () => {
     setTimeout(renderSwitcher, 300);
 });
