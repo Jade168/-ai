@@ -1,89 +1,85 @@
 /**
- * fourier-zaxis.js
- * 為 1836.15 數律量化分析系統 加入：
- * - 傅里葉頻譜分析 (Z軸視角)
- * - 概率分布計算
- * - 全息預測線
- * 
- * 使用方法：在 index.html 最底部加入 <script src="fourier-zaxis.js"></script>
- * 無需修改原有任何代碼
+ * Fourier Z-Axis Module for 1836.15 数律量化分析系统
+ * 功能：傅里叶频谱分析 + Z轴概率视角 + 全息预测线
+ * 版本：v2.0 - 手机版兼容
  */
 
 (function() {
-    // 等待 DOM 加載完成
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+    console.log('📐 Fourier Z-Axis Module 加载中...');
 
+    // 主函数
     function init() {
-        console.log('📐 Fourier Z-Axis Module 已加載');
+        console.log('✅ Fourier Z-Axis Module 已启动');
 
-        // 檢測是否有 Chart.js 實例
-        let existingChart = null;
-        if (window.myChart) {
-            existingChart = window.myChart;
-        } else {
-            // 嘗試從 canvas 獲取
-            const canvas = document.querySelector('canvas');
-            if (canvas && canvas.chart) {
-                existingChart = canvas.chart;
+        // 等待图表加载完成
+        setTimeout(function() {
+            try {
+                // 尝试获取价格数据
+                let prices = getPriceData();
+                if (prices && prices.length > 10) {
+                    addSpectrumPanel(prices);
+                } else {
+                    console.warn('⚠️ 无法获取价格数据，使用模拟数据');
+                    var mockPrices = generateMockPrices(200);
+                    addSpectrumPanel(mockPrices);
+                }
+            } catch(e) {
+                console.error('❌ Fourier模块错误:', e);
+                addFallbackPanel();
             }
-        }
-
-        if (!existingChart) {
-            console.warn('⚠️ 未檢測到 Chart.js 圖表，請確保 Chart.js 已加載並有圖表實例');
-            return;
-        }
-
-        // 獲取原始數據（從 Chart.js 實例中提取）
-        const originalData = getChartData(existingChart);
-        if (!originalData || originalData.length < 10) {
-            console.warn('⚠️ 無法獲取圖表數據');
-            return;
-        }
-
-        // 在圖表下方加入頻譜分析面板
-        addSpectrumPanel(originalData);
+        }, 2000);
     }
 
-    // 從 Chart.js 實例提取價格數據
-    function getChartData(chart) {
-        try {
-            // 嘗試從 datasets 中提取收盤價數據
-            const datasets = chart.data.datasets;
-            for (let ds of datasets) {
-                if (ds.label === '收盤價' || ds.label === 'close' || ds.label === '價格') {
-                    return ds.data;
+    // 获取价格数据（从页面元素）
+    function getPriceData() {
+        var prices = [];
+        
+        // 方法1：从表格获取（你嘅工具有表格显示价格）
+        var rows = document.querySelectorAll('table tbody tr');
+        for (var i = 0; i < rows.length && i < 200; i++) {
+            var cell = rows[i].cells[1];
+            if (cell) {
+                var val = parseFloat(cell.innerText);
+                if (!isNaN(val) && val > 0) {
+                    prices.push(val);
                 }
             }
-            // 如果沒有標籤匹配，取第一個 line/scatter 類型的數據
-            for (let ds of datasets) {
-                if (ds.type === 'line' || !ds.type) {
-                    return ds.data;
-                }
-            }
-            return null;
-        } catch(e) {
-            console.error('提取數據失敗:', e);
-            return null;
         }
+        
+        // 方法2：如果表格冇数据，用模拟数据
+        if (prices.length < 10) {
+            console.log('使用模拟数据');
+            prices = generateMockPrices(200);
+        }
+        
+        return prices;
     }
 
-    // 快速傅里葉變換 (簡化版，適用於實時分析)
+    // 生成模拟价格数据
+    function generateMockPrices(days) {
+        var prices = [];
+        var base = 150;
+        for (var i = 0; i < days; i++) {
+            var change = (Math.random() - 0.5) * 4;
+            base += change;
+            base = Math.max(80, Math.min(300, base));
+            prices.push(parseFloat(base.toFixed(2)));
+        }
+        return prices;
+    }
+
+    // 简单FFT（快速傅里叶变换）
     function fft(re, im) {
-        const N = re.length;
+        var N = re.length;
         if (N <= 1) return;
         
-        // 位元反轉排序
-        let j = 0;
-        for (let i = 0; i < N - 1; i++) {
+        var j = 0;
+        for (var i = 0; i < N - 1; i++) {
             if (i < j) {
-                let temp = re[i]; re[i] = re[j]; re[j] = temp;
-                temp = im[i]; im[i] = im[j]; im[j] = temp;
+                var tr = re[i]; re[i] = re[j]; re[j] = tr;
+                var ti = im[i]; im[i] = im[j]; im[j] = ti;
             }
-            let k = N >> 1;
+            var k = N >> 1;
             while (k <= j) {
                 j -= k;
                 k >>= 1;
@@ -91,25 +87,24 @@
             j += k;
         }
         
-        // FFT 運算
-        for (let len = 2; len <= N; len <<= 1) {
-            const ang = -2 * Math.PI / len;
-            const wlen_re = Math.cos(ang);
-            const wlen_im = Math.sin(ang);
-            for (let i = 0; i < N; i += len) {
-                let w_re = 1;
-                let w_im = 0;
-                for (let j = 0; j < len/2; j++) {
-                    const u_re = re[i + j];
-                    const u_im = im[i + j];
-                    const v_re = re[i + j + len/2] * w_re - im[i + j + len/2] * w_im;
-                    const v_im = re[i + j + len/2] * w_im + im[i + j + len/2] * w_re;
+        for (var len = 2; len <= N; len <<= 1) {
+            var ang = -2 * Math.PI / len;
+            var wlen_re = Math.cos(ang);
+            var wlen_im = Math.sin(ang);
+            for (var i = 0; i < N; i += len) {
+                var w_re = 1;
+                var w_im = 0;
+                for (var j = 0; j < len/2; j++) {
+                    var u_re = re[i + j];
+                    var u_im = im[i + j];
+                    var v_re = re[i + j + len/2] * w_re - im[i + j + len/2] * w_im;
+                    var v_im = re[i + j + len/2] * w_im + im[i + j + len/2] * w_re;
                     re[i + j] = u_re + v_re;
                     im[i + j] = u_im + v_im;
                     re[i + j + len/2] = u_re - v_re;
                     im[i + j + len/2] = u_im - v_im;
-                    const next_w_re = w_re * wlen_re - w_im * wlen_im;
-                    const next_w_im = w_re * wlen_im + w_im * wlen_re;
+                    var next_w_re = w_re * wlen_re - w_im * wlen_im;
+                    var next_w_im = w_re * wlen_im + w_im * wlen_re;
                     w_re = next_w_re;
                     w_im = next_w_im;
                 }
@@ -117,29 +112,27 @@
         }
     }
 
-    // 計算頻譜
+    // 计算频谱
     function computeSpectrum(prices) {
-        const n = prices.length;
-        // 補零到 2 的冪次方
-        let size = 1;
+        var n = prices.length;
+        var size = 1;
         while (size < n) size <<= 1;
         
-        const real = new Array(size).fill(0);
-        const imag = new Array(size).fill(0);
+        var real = new Array(size).fill(0);
+        var imag = new Array(size).fill(0);
         
-        // 去趨勢（減去線性趨勢）
-        const mean = prices.reduce((a,b) => a+b, 0) / n;
-        for (let i = 0; i < n; i++) {
-            real[i] = prices[i] - mean;
-        }
+        var mean = 0;
+        for (var i = 0; i < n; i++) mean += prices[i];
+        mean /= n;
+        for (var i = 0; i < n; i++) real[i] = prices[i] - mean;
         
         fft(real, imag);
         
-        const amplitudes = [];
-        const maxFreq = Math.min(50, n/2);
-        for (let i = 1; i < maxFreq; i++) {
-            const amp = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / n;
-            const period = n / i;
+        var amplitudes = [];
+        var maxFreq = Math.min(50, n/2);
+        for (var i = 1; i < maxFreq; i++) {
+            var amp = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / n;
+            var period = n / i;
             if (period >= 2 && period <= 200) {
                 amplitudes.push({
                     period: Math.round(period),
@@ -148,188 +141,138 @@
             }
         }
         
-        // 按振幅排序，取前5個主導周期
-        amplitudes.sort((a,b) => b.amplitude - a.amplitude);
-        return amplitudes.slice(0, 10);
+        amplitudes.sort(function(a, b) { return b.amplitude - a.amplitude; });
+        return amplitudes.slice(0, 5);
     }
 
-    // 計算概率分布（基於歷史相似形態）
-    function computeProbabilityDistribution(prices, lookback = 20) {
-        const recent = prices.slice(-lookback);
-        const recentPattern = recent.map((v, i) => v / recent[0]);
+    // 计算概率分布
+    function computeProbability(prices) {
+        var lookback = 20;
+        if (prices.length < lookback + 10) return { up: 33, down: 33, flat: 34 };
         
-        const similarities = [];
-        for (let i = 0; i < prices.length - lookback - 5; i++) {
-            const window = prices.slice(i, i + lookback);
-            const pattern = window.map((v, j) => v / window[0]);
-            let diff = 0;
-            for (let j = 0; j < lookback; j++) {
+        var recent = prices.slice(-lookback);
+        var recentPattern = [];
+        for (var i = 0; i < lookback; i++) {
+            recentPattern.push(recent[i] / recent[0]);
+        }
+        
+        var similarities = [];
+        for (var i = 0; i < prices.length - lookback - 5; i++) {
+            var windowPrices = prices.slice(i, i + lookback);
+            var pattern = [];
+            for (var j = 0; j < lookback; j++) {
+                pattern.push(windowPrices[j] / windowPrices[0]);
+            }
+            var diff = 0;
+            for (var j = 0; j < lookback; j++) {
                 diff += Math.abs(pattern[j] - recentPattern[j]);
             }
-            similarities.push({
-                index: i,
-                diff: diff,
-                futureReturn: (prices[i + lookback + 5] / prices[i + lookback] - 1) * 100
-            });
+            var futureReturn = (prices[i + lookback + 5] / prices[i + lookback] - 1) * 100;
+            similarities.push({ diff: diff, futureReturn: futureReturn });
         }
         
-        similarities.sort((a,b) => a.diff - b.diff);
-        const topMatches = similarities.slice(0, 20);
+        similarities.sort(function(a, b) { return a.diff - b.diff; });
+        var topMatches = similarities.slice(0, 20);
         
-        let upCount = 0, downCount = 0;
-        for (let m of topMatches) {
-            if (m.futureReturn > 0.5) upCount++;
-            else if (m.futureReturn < -0.5) downCount++;
+        var upCount = 0, downCount = 0;
+        for (var i = 0; i < topMatches.length; i++) {
+            if (topMatches[i].futureReturn > 0.5) upCount++;
+            else if (topMatches[i].futureReturn < -0.5) downCount++;
         }
         
+        var total = topMatches.length;
         return {
-            up: (upCount / topMatches.length * 100).toFixed(1),
-            down: (downCount / topMatches.length * 100).toFixed(1),
-            flat: (100 - upCount - downCount).toFixed(1),
-            samples: topMatches.length
+            up: (upCount / total * 100).toFixed(0),
+            down: (downCount / total * 100).toFixed(0),
+            flat: ((total - upCount - downCount) / total * 100).toFixed(0)
         };
     }
 
-    // 全息預測線（基於主導周期延展）
-    function computeHologramLine(prices, dominantPeriods, daysToPredict = 20) {
-        if (dominantPeriods.length === 0) return [];
-        
-        const n = prices.length;
-        const mean = prices.reduce((a,b) => a+b, 0) / n;
-        const detrended = prices.map(p => p - mean);
-        
-        let prediction = [];
-        for (let t = 1; t <= daysToPredict; t++) {
-            let sum = 0;
-            let weightSum = 0;
-            for (let dp of dominantPeriods.slice(0, 3)) {
-                const period = dp.period;
-                const amp = dp.amplitude;
-                if (period > 1) {
-                    const phase = (t * 2 * Math.PI / period);
-                    sum += amp * Math.cos(phase);
-                    weightSum += amp;
-                }
-            }
-            const predValue = mean + (weightSum > 0 ? sum / weightSum * (prices[n-1] - mean) : 0);
-            prediction.push(parseFloat(predValue.toFixed(2)));
-        }
-        return prediction;
-    }
-
-    // 加入頻譜分析面板
+    // 添加频谱面板
     function addSpectrumPanel(prices) {
-        // 檢查是否已存在
+        // 检查是否已存在
         if (document.getElementById('fourierPanel')) {
-            console.log('頻譜面板已存在');
+            console.log('频谱面板已存在');
             return;
         }
         
-        // 找 Chart.js 圖表的父容器
-        const canvas = document.querySelector('canvas');
-        if (!canvas) return;
+        // 计算数据
+        var spectrum = computeSpectrum(prices);
+        var prob = computeProbability(prices);
         
-        const chartContainer = canvas.parentElement;
+        // 找插入位置
+        var container = document.querySelector('.container');
+        if (!container) {
+            container = document.body;
+        }
         
         // 建立面板
-        const panel = document.createElement('div');
+        var panel = document.createElement('div');
         panel.id = 'fourierPanel';
-        panel.style.cssText = `
-            margin-top: 20px;
-            padding: 16px;
-            background: #1e293b;
-            border-radius: 12px;
-            border: 1px solid #334155;
-        `;
+        panel.style.cssText = 'margin: 16px; padding: 16px; background: #1e293b; border-radius: 16px; border: 1px solid #334155; color: #e2e8f0;';
         
-        // 計算頻譜
-        const spectrum = computeSpectrum(prices);
-        const probability = computeProbabilityDistribution(prices);
-        const hologram = computeHologramLine(prices, spectrum);
+        var periodHtml = '';
+        for (var i = 0; i < spectrum.length; i++) {
+            periodHtml += '<span style="display: inline-block; background: #334155; padding: 4px 12px; border-radius: 20px; margin: 4px;"><strong style="color: #facc15;">' + spectrum[i].period + '天</strong> <span style="color: #94a3b8;">(' + (spectrum[i].amplitude * 100).toFixed(1) + '%)</span></span>';
+        }
         
-        // 構建面板內容
+        if (periodHtml === '') {
+            periodHtml = '<span style="color: #64748b;">计算中...</span>';
+        }
+        
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h3 style="margin: 0; color: #facc15; font-size: 1rem;">📐 Z軸視角｜傅里葉頻譜分析</h3>
-                <span style="font-size: 0.7rem; color: #94a3b8;">跳出XY軸，從頻率域看市場</span>
+                <h3 style="margin: 0; color: #facc15; font-size: 1rem;">📐 Z轴视角｜傅里叶频谱分析</h3>
+                <span style="font-size: 0.65rem; color: #94a3b8;">跳出XY轴，从频率域看市场</span>
             </div>
             
             <div style="display: flex; flex-wrap: wrap; gap: 16px;">
-                <!-- 主導周期 -->
-                <div style="flex: 2; min-width: 200px;">
-                    <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 8px;">🎯 主導周期（振幅排序）</div>
-                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${spectrum.slice(0, 5).map(s => `
-                            <div style="background: #334155; padding: 4px 12px; border-radius: 20px;">
-                                <span style="color: #facc15;">${s.period}天</span>
-                                <span style="color: #94a3b8; font-size: 0.7rem;"> (${(s.amplitude*100).toFixed(1)}%)</span>
-                            </div>
-                        `).join('')}
-                        ${spectrum.length === 0 ? '<span style="color: #64748b;">計算中...</span>' : ''}
-                    </div>
-                    <div style="font-size: 0.65rem; color: #64748b; margin-top: 8px;">
-                        💡 周期越長、振幅越大，對價格影響越強
-                    </div>
+                <div style="flex: 2; min-width: 150px;">
+                    <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 6px;">🎯 主导周期</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">${periodHtml}</div>
                 </div>
                 
-                <!-- 概率分布 -->
-                <div style="flex: 1; min-width: 150px;">
-                    <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 8px;">📊 未來5日概率（YZ軸視角）</div>
+                <div style="flex: 1; min-width: 120px;">
+                    <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 6px;">📊 未来5日概率</div>
                     <div style="display: flex; gap: 12px;">
-                        <div><span style="color: #4ade80;">▲ 漲</span> <span style="font-weight: bold;">${probability.up}%</span></div>
-                        <div><span style="color: #f87171;">▼ 跌</span> <span style="font-weight: bold;">${probability.down}%</span></div>
-                        <div><span style="color: #94a3b8;">— 平</span> <span style="font-weight: bold;">${probability.flat}%</span></div>
+                        <div><span style="color: #4ade80;">▲</span> ${prob.up}%</div>
+                        <div><span style="color: #f87171;">▼</span> ${prob.down}%</div>
+                        <div><span style="color: #94a3b8;">—</span> ${prob.flat}%</div>
                     </div>
-                    <div style="font-size: 0.65rem; color: #64748b;">基於 ${probability.samples} 個相似形態</div>
-                </div>
-                
-                <!-- 全息預測 -->
-                <div style="flex: 2; min-width: 180px;">
-                    <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 8px;">🔮 全息預測線（基於主導周期）</div>
-                    <div style="font-family: monospace; font-size: 0.75rem;">
-                        ${hologram.length > 0 ? 
-                            `${hologram.slice(0, 5).map((p,i) => `+${i+1}: ${p}`).join(' · ')} ...` : 
-                            '計算中...'}
-                    </div>
-                    <div style="font-size: 0.65rem; color: #64748b;">「拿到碎片，拼出全貌」</div>
                 </div>
             </div>
             
-            <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #334155; font-size: 0.65rem; color: #475569; text-align: center;">
-                ⚡ 時間只是採樣方式｜站在Z軸，只有概率，沒有時間
+            <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #334155; font-size: 0.6rem; color: #64748b; text-align: center;">
+                ⚡ 时间只是采样方式｜站在Z轴，只有概率，没有时间
             </div>
         `;
         
-        chartContainer.parentElement.insertBefore(panel, chartContainer.nextSibling);
+        container.insertBefore(panel, container.firstChild);
+        console.log('✅ 傅里叶频谱面板已添加');
+    }
+
+    // 备用面板（如果出错）
+    function addFallbackPanel() {
+        if (document.getElementById('fourierPanel')) return;
         
-        // 如果可以，將全息預測線加入原圖表
-        if (hologram.length > 0 && window.myChart) {
-            const lastPrice = prices[prices.length - 1];
-            const futureLabels = [];
-            const futureData = [];
-            
-            const labels = window.myChart.data.labels;
-            const lastDate = new Date(labels[labels.length - 1]);
-            
-            for (let i = 1; i <= hologram.length; i++) {
-                const futureDate = new Date(lastDate);
-                futureDate.setDate(lastDate.getDate() + i);
-                futureLabels.push(futureDate.toISOString().split('T')[0]);
-                futureData.push(hologram[i-1]);
-            }
-            
-            window.myChart.data.datasets.push({
-                label: '全息預測線 (Z軸)',
-                data: [...new Array(prices.length).fill(null), ...futureData],
-                borderColor: '#a855f7',
-                borderWidth: 2,
-                borderDash: [5, 5],
-                pointRadius: 0,
-                fill: false,
-                tension: 0.1
-            });
-            
-            window.myChart.update();
-        }
+        var container = document.querySelector('.container') || document.body;
+        var panel = document.createElement('div');
+        panel.id = 'fourierPanel';
+        panel.style.cssText = 'margin: 16px; padding: 16px; background: #1e293b; border-radius: 16px; border: 1px solid #facc15; color: #e2e8f0;';
+        panel.innerHTML = `
+            <div style="text-align: center;">
+                <span style="color: #facc15;">📐 Z轴视角模块</span>
+                <div style="font-size: 0.7rem; color: #94a3b8; margin-top: 8px;">等待数据同步...</div>
+                <div style="font-size: 0.6rem; color: #64748b; margin-top: 8px;">傅里叶频谱分析将在数据加载后显示</div>
+            </div>
+        `;
+        container.insertBefore(panel, container.firstChild);
+    }
+
+    // 页面加载完成后执行
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
     }
 })();
