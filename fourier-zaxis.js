@@ -1,11 +1,10 @@
 (function(){
-console.log('📐 Z轴模块 v6.0 彩带+短期周期修正版');
+console.log('📐 Z轴模块 v6.1 修复版');
 
 var C={fixedLen:200,shortPeriodMax:45,shortPeriodMin:10};
 var prices=[],spectrum=[],shortSpectrum=[],prob={up:33,down:33,flat:34},ribbon={color:'gray',trend:'flat',strength:0};
-var rawProb={up:33,down:33,flat:34};
 
-function getSymbol(){try{var i=document.getElementById('symbol')||document.querySelector('input[placeholder*="代码"]');return i&&i.value?i.value.trim().toUpperCase():'STK'}catch(e){return'STK'}}
+function getSymbol(){try{var i=document.getElementById('symbol');return i&&i.value?i.value.trim().toUpperCase():'STK'}catch(e){return'STK'}}
 
 function getPrices(){
     try{
@@ -65,7 +64,6 @@ function getSpectrum(p){
 }
 
 function getShortSpectrum(fullSpec){
-    // 只取短周期(10-45天)用于5日预测
     return fullSpec.filter(function(s){return s.period>=C.shortPeriodMin&&s.period<=C.shortPeriodMax});
 }
 
@@ -92,32 +90,22 @@ function calcRibbon(p){
 }
 
 function calcShortTermProb(p,shortSpec,rib){
-    // 短期概率：基于近期走势(50%) + 短周期(30%) + 彩带(20%)
     if(p.length<20)return{up:33,down:33,flat:34};
-    
-    // 1. 近期走势(过去10日)
     var recent=p.slice(-10);
     var recentChange=(recent[recent.length-1]-recent[0])/recent[0]*100;
     var recentUpProb=50+Math.min(30,Math.max(-30,recentChange*2));
-    
-    // 2. 短周期强度
     var shortAmp=0;
     for(var i=0;i<shortSpec.length;i++)shortAmp+=shortSpec[i].amplitude;
     shortAmp=Math.min(100,shortAmp/2);
-    
-    // 3. 彩带影响
     var ribbonBonus=0;
     if(rib.color=='red'&&rib.trend=='up')ribbonBonus=20;
     else if(rib.color=='red'&&rib.trend=='down')ribbonBonus=5;
     else if(rib.color=='green'&&rib.trend=='down')ribbonBonus=-15;
     else if(rib.color=='green'&&rib.trend=='up')ribbonBonus=-5;
-    
-    // 综合计算
     var upProb=recentUpProb*0.5 + shortAmp*0.3 + (50+ribbonBonus)*0.2;
     upProb=Math.min(85,Math.max(15,upProb));
     var downProb=Math.max(10,Math.min(50,100-upProb-20));
     var flatProb=100-upProb-downProb;
-    
     return{up:Math.round(upProb),down:Math.round(downProb),flat:Math.round(flatProb)};
 }
 
@@ -129,6 +117,13 @@ function drawRibbonBar(rib){
             var div=document.createElement('div');div.style.margin='8px 0';
             div.innerHTML='<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
             can.parentElement.insertBefore(div,can.nextSibling);
+        }else{
+            var panel=document.getElementById('fourierPanel');
+            if(panel){
+                var div2=document.createElement('div');div2.style.margin='8px 0';
+                div2.innerHTML='<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
+                panel.appendChild(div2);
+            }
         }
     }
     cv=document.getElementById('ribbonCanvas');
@@ -138,8 +133,7 @@ function drawRibbonBar(rib){
     ctx.fillStyle=rib.color=='red'?'#f87171':'#4ade80';
     ctx.fillRect(0,0,cv.width,40);
     ctx.fillStyle='white';ctx.font='bold 12px monospace';
-    var txt='彩带: '+rib.color+' | 趋势: '+rib.trend+' | 强度: '+Math.round(rib.strength)+'%';
-    ctx.fillText(txt,10,25);
+    ctx.fillText('彩带: '+rib.color+' | 趋势: '+rib.trend+' | 强度: '+Math.round(rib.strength)+'%',10,25);
 }
 
 function drawHologram(){
@@ -174,7 +168,12 @@ function drawHologram(){
 
 function updatePanel(){
     var panel=document.getElementById('fourierPanel');
-    if(!panel)return;
+    if(!panel){
+        panel=document.createElement('div');panel.id='fourierPanel';
+        panel.style.cssText='margin:16px;padding:16px;background:#1e293b;border-radius:16px;border:1px solid #334155';
+        var c=document.querySelector('.container')||document.body;
+        c.insertBefore(panel,c.firstChild);
+    }
     var sym=getSymbol();
     var topHtml='',shortHtml='';
     for(var i=0;i<Math.min(3,spectrum.length);i++){
@@ -186,9 +185,7 @@ function updatePanel(){
         shortHtml+='<span style="background:#3b82f6;color:white;padding:3px 10px;border-radius:20px;margin:3px;font-size:0.7rem">'+ss.period+'天 ('+ss.amplitude+'%)</span>';
     }
     var ribbonText=ribbon.color=='red'?'🔴 红色(向上)':'🟢 绿色(向下)';
-    if(ribbon.trend=='up')ribbonText+=' ↑';
-    else ribbonText+=' ↓';
-    
+    if(ribbon.trend=='up')ribbonText+=' ↑';else ribbonText+=' ↓';
     panel.innerHTML='<div class="fourier-content"><div style="display:flex;justify-content:space-between;flex-wrap:wrap"><h3 style="color:#facc15;margin:0">📐 Z轴｜'+sym+'</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white;font-size:0.7rem">🔄</button></div>'+
         '<div style="margin:12px 0"><div style="color:#94a3b8;font-size:0.7rem">🎯 全周期Top3</div>'+topHtml+'</div>'+
         '<div style="margin:12px 0"><div style="color:#94a3b8;font-size:0.7rem">📊 短周期(10-45天)用于5日预测</div>'+shortHtml+'</div>'+
@@ -196,29 +193,29 @@ function updatePanel(){
         '<div><span style="color:#4ade80">▲ 涨 '+prob.up+'%</span> <span style="color:#f87171">▼ 跌 '+prob.down+'%</span> <span style="color:#94a3b8">— 平 '+prob.flat+'%</span></div></div>'+
         '<div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>'+ribbonText+' | 强度:'+Math.round(ribbon.strength)+'%</div></div></div>'+
         '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 基于'+C.fixedLen+'天数据 | 短期概率='+C.shortPeriodMin+'-'+C.shortPeriodMax+'天周期</div></div>';
-    
     var btn=document.getElementById('refreshBtn');
     if(btn)btn.onclick=function(){refreshAll();};
 }
 
 function refreshAll(){
-    var raw=getPrices();
-    if(raw.length)prices=raw;
-    spectrum=getSpectrum(prices);
-    shortSpectrum=getShortSpectrum(spectrum);
-    ribbon=calcRibbon(prices);
-    prob=calcShortTermProb(prices,shortSpectrum,ribbon);
-    updatePanel();
-    drawRibbonBar(ribbon);
-    drawHologram();
-    console.log('✅ 刷新完成 | 短周期数:'+shortSpectrum.length+' | 上升概率:'+prob.up+'%');
+    try{
+        var raw=getPrices();
+        if(raw.length)prices=raw;
+        spectrum=getSpectrum(prices);
+        shortSpectrum=getShortSpectrum(spectrum);
+        ribbon=calcRibbon(prices);
+        prob=calcShortTermProb(prices,shortSpectrum,ribbon);
+        updatePanel();
+        drawRibbonBar(ribbon);
+        drawHologram();
+        console.log('✅ 刷新完成 | 上升概率:'+prob.up+'%');
+    }catch(e){console.error('刷新错误',e);}
 }
 
 function init(){
-    var p=document.createElement('div');p.id='fourierPanel';p.style.cssText='margin:16px;padding:16px;background:#1e293b;border-radius:16px;border:1px solid #334155';
-    var c=document.querySelector('.container');if(c)c.insertBefore(p,c.firstChild);
     refreshAll();
-    var inp=document.getElementById('symbol');if(inp)inp.addEventListener('change',function(){setTimeout(refreshAll,1000);});
+    var inp=document.getElementById('symbol');
+    if(inp)inp.addEventListener('change',function(){setTimeout(refreshAll,1000);});
     var btns=document.querySelectorAll('button');
     for(var i=0;i<btns.length;i++){var t=btns[i].innerText||'';if(t.indexOf('分析')>=0||t.indexOf('分析')>=0)btns[i].addEventListener('click',function(){setTimeout(refreshAll,1500);});}
 }
