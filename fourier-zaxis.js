@@ -1,631 +1,206 @@
-/**
- * Fourier Z-Axis Module for 1836.15 数律量化分析系统
- * 版本：v4.0 修正版
- * 
- * 修正内容：
- * 1. 固定数据长度（200天），确保每次计算结果一致
- * 2. 数据源唯一：只从图表读取，不重新抓API
- * 3. 监听股票切换，自动重新计算
- * 4. 刷新按钮只重算，不换数据
- * 5. 概率计算用Top3周期加权平均，不再依赖单周期排序
- */
+(function(){
+console.log('📐 Fourier Z-Axis v4.1 压缩版');
+var C={fixedLen:200,topN:3,samples:50,volAdjust:true};
+var prices=[],spectrum=[],prob={up:33,down:33,flat:34},ribbon={color:'gray',b:0,d:0,bDir:0},currentSymbol='';
 
-(function() {
-    console.log('📐 Fourier Z-Axis Module v4.0 加载中...');
+function getSymbol(){try{var inp=document.getElementById('symbol')||document.querySelector('input[placeholder*="代码"]');return inp&&inp.value?inp.value.trim().toUpperCase():'UNKNOWN'}catch(e){return'UNKNOWN'}}
 
-    // ========== 配置 ==========
-    var CONFIG = {
-        fixedDataLength: 200,      // 固定数据长度
-        topPeriodsCount: 3,        // 取前几个周期
-        probabilitySamples: 50,    // 相似形态数量
-        volatilityAdjust: true     // 波动率调整
-    };
-
-    var currentPrices = [];
-    var currentSpectrum = [];
-    var currentProbability = { up: 50, down: 25, flat: 25 };
-    var currentSymbol = '';
-    var isInitialized = false;
-
-    // ========== 获取当前股票代码 ==========
-    function getCurrentSymbol() {
-        try {
-            var input = document.getElementById('symbol') || 
-                        document.querySelector('input[placeholder*="代码"]') ||
-                        document.querySelector('input[type="text"][value*="TSLA"], input[type="text"][value*="00700"], input[type="text"][value*="AAPL"]');
-            if (input && input.value) {
-                return input.value.trim().toUpperCase();
+function getPrices(){
+    try{
+        if(window.myChart&&window.myChart.data)
+            for(var i=0;i<window.myChart.data.datasets.length;i++){
+                var ds=window.myChart.data.datasets[i],lbl=ds.label||'';
+                if((lbl.indexOf('收盘')>=0||lbl=='close'||lbl=='价格')&&ds.data){
+                    var d=ds.data.filter(function(v){return v!==null&&!isNaN(v)&&v>0});
+                    if(d.length>20)return d;
+                }
             }
-            return 'UNKNOWN';
-        } catch(e) {
-            return 'UNKNOWN';
-        }
-    }
-
-    // ========== 从图表获取价格数据（唯一数据源） ==========
-    function getPricesFromChart() {
-        try {
-            // 方法1：从 window.myChart 获取
-            if (window.myChart && window.myChart.data && window.myChart.data.datasets) {
-                var datasets = window.myChart.data.datasets;
-                for (var i = 0; i < datasets.length; i++) {
-                    var ds = datasets[i];
-                    var label = ds.label || '';
-                    if (label === '收盘价' || label === 'close' || label === '价格' || label.indexOf('收盘') >= 0 || ds.type === 'line') {
-                        var data = ds.data;
-                        if (data && data.length > 20) {
-                            var prices = data.filter(function(v) { return v !== null && !isNaN(v) && v > 0; });
-                            if (prices.length > 20) {
-                                console.log('✅ 从图表获取到 ' + prices.length + ' 条数据');
-                                return prices;
-                            }
-                        }
+        var canvases=document.querySelectorAll('canvas');
+        for(var i=0;i<canvases.length;i++)
+            if(canvases[i].chart&&canvases[i].chart.data)
+                for(var j=0;j<canvases[i].chart.data.datasets.length;j++){
+                    var ds2=canvases[i].chart.data.datasets[j],lbl2=ds2.label||'';
+                    if((lbl2.indexOf('收盘')>=0||lbl2=='close')&&ds2.data){
+                        var d2=ds2.data.filter(function(v){return v!==null&&!isNaN(v)&&v>0});
+                        if(d2.length>20)return d2;
                     }
                 }
+        var tables=document.querySelectorAll('table tbody tr'),tp=[];
+        if(tables.length>10)
+            for(var i=0;i<tables.length&&i<500;i++){
+                var v=parseFloat(tables[i].cells[1]?.innerText.replace(/[^0-9.-]/g,''));
+                if(!isNaN(v)&&v>0&&v<1e4)tp.push(v);
             }
-            
-            // 方法2：从 canvas chart 实例获取
-            var canvases = document.querySelectorAll('canvas');
-            for (var i = 0; i < canvases.length; i++) {
-                if (canvases[i].chart && canvases[i].chart.data) {
-                    var datasets2 = canvases[i].chart.data.datasets;
-                    for (var j = 0; j < datasets2.length; j++) {
-                        var ds2 = datasets2[j];
-                        var label2 = ds2.label || '';
-                        if (label2 === '收盘价' || label2 === 'close' || label2 === '价格' || label2.indexOf('收盘') >= 0 || ds2.type === 'line') {
-                            var data2 = ds2.data;
-                            if (data2 && data2.length > 20) {
-                                var prices2 = data2.filter(function(v) { return v !== null && !isNaN(v) && v > 0; });
-                                if (prices2.length > 20) {
-                                    console.log('✅ 从canvas获取到 ' + prices2.length + ' 条数据');
-                                    return prices2;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // 方法3：从表格获取（后备）
-            var tables = document.querySelectorAll('table');
-            for (var t = 0; t < tables.length; t++) {
-                var rows = tables[t].querySelectorAll('tbody tr');
-                if (rows.length > 10) {
-                    var tempPrices = [];
-                    for (var i = 0; i < rows.length && i < 500; i++) {
-                        var cell = rows[i].cells[1];
-                        if (cell) {
-                            var val = parseFloat(cell.innerText.replace(/[^0-9.-]/g, ''));
-                            if (!isNaN(val) && val > 0 && val < 10000) {
-                                tempPrices.push(val);
-                            }
-                        }
-                    }
-                    if (tempPrices.length > 20) {
-                        console.log('✅ 从表格获取到 ' + tempPrices.length + ' 条数据');
-                        return tempPrices;
-                    }
-                }
-            }
-            
-            return null;
-        } catch(e) {
-            console.error('获取图表数据失败:', e);
-            return null;
-        }
-    }
+        if(tp.length>20)return tp;
+        var base=150,mp=[];
+        for(var i=0;i<C.fixedLen;i++){base+=(Math.random()-0.5)*3;base=Math.max(80,Math.min(300,base));mp.push(parseFloat(base.toFixed(2)));}
+        return mp;
+    }catch(e){return[]}
+}
 
-    // ========== 固定数据长度 ==========
-    function fixDataLength(prices) {
-        if (!prices || prices.length === 0) return [];
-        if (prices.length <= CONFIG.fixedDataLength) {
-            return prices.slice();
-        }
-        // 只取最近 CONFIG.fixedDataLength 天
-        return prices.slice(-CONFIG.fixedDataLength);
+function fft(r,i){
+    var N=r.length;if(N<=1)return;
+    var j=0;
+    for(var x=0;x<N-1;x++){
+        if(x<j){var tr=r[x];r[x]=r[j];r[j]=tr;var ti=i[x];i[x]=i[j];i[j]=ti;}
+        var k=N>>1;while(k<=j){j-=k;k>>=1;}j+=k;
     }
+    for(var len=2;len<=N;len<<=1){
+        var ang=-2*Math.PI/len,wl_re=Math.cos(ang),wl_im=Math.sin(ang);
+        for(var x=0;x<N;x+=len){
+            var w_re=1,w_im=0;
+            for(var y=0;y<len/2;y++){
+                var u_re=r[x+y],u_im=i[x+y],v_re=r[x+y+len/2]*w_re-i[x+y+len/2]*w_im,v_im=r[x+y+len/2]*w_im+i[x+y+len/2]*w_re;
+                r[x+y]=u_re+v_re;i[x+y]=u_im+v_im;r[x+y+len/2]=u_re-v_re;i[x+y+len/2]=u_im-v_im;
+                var nw_re=w_re*wl_re-w_im*wl_im,nw_im=w_re*wl_im+w_im*wl_re;w_re=nw_re;w_im=nw_im;
+            }
+        }
+    }
+}
 
-    // ========== 生成模拟数据（仅当图表无数据时） ==========
-    function generateMockPrices(days) {
-        var p = [];
-        var base = 150;
-        for (var i = 0; i < days; i++) {
-            var change = (Math.random() - 0.5) * 3;
-            base += change;
-            base = Math.max(80, Math.min(300, base));
-            p.push(parseFloat(base.toFixed(2)));
-        }
-        return p;
+function getSpectrum(p){
+    var n=p.length,size=1;while(size<n)size<<=1;
+    var re=Array(size).fill(0),im=Array(size).fill(0),mean=0;
+    for(var i=0;i<n;i++)mean+=p[i];mean/=n;
+    for(var i=0;i<n;i++)re[i]=p[i]-mean;
+    fft(re,im);
+    var amps=[];
+    for(var i=1;i<Math.min(50,n/2);i++){
+        var amp=Math.sqrt(re[i]*re[i]+im[i]*im[i])/n,per=n/i;
+        if(per>=5&&per<=300)amps.push({period:Math.round(per),amplitude:parseFloat((amp*100).toFixed(1))});
     }
+    amps.sort(function(a,b){return b.amplitude-a.amplitude});
+    return amps.slice(0,10);
+}
 
-    // ========== 刷新数据（只从图表读取，不重新抓API） ==========
-    function refreshData() {
-        console.log('🔄 刷新数据...');
-        
-        var newPrices = getPricesFromChart();
-        if (!newPrices || newPrices.length < 20) {
-            console.warn('⚠️ 无法从图表获取数据，使用模拟数据');
-            newPrices = generateMockPrices(CONFIG.fixedDataLength);
-        }
-        
-        // 固定长度
-        newPrices = fixDataLength(newPrices);
-        
-        var newSymbol = getCurrentSymbol();
-        var dataChanged = (currentPrices.length !== newPrices.length) || (currentSymbol !== newSymbol);
-        
-        // 检查数据是否真的变了
-        if (!dataChanged && currentPrices.length > 0) {
-            for (var i = 0; i < Math.min(currentPrices.length, newPrices.length); i++) {
-                if (Math.abs(currentPrices[i] - newPrices[i]) > 0.01) {
-                    dataChanged = true;
-                    break;
-                }
-            }
-        }
-        
-        if (dataChanged) {
-            currentPrices = newPrices;
-            currentSymbol = newSymbol;
-            console.log('📊 数据已更新，股票: ' + currentSymbol + '，数据长度: ' + currentPrices.length);
-            return true;
-        }
-        
-        console.log('📊 数据无变化');
-        return false;
+function calcRibbon(p){
+    if(p.length<30)return{color:'gray',b:0,d:0,bDir:0};
+    var n=p.length,x1=[];
+    for(var i=0;i<n;i++)x1.push((3*p[i]+(i>0?p[i-1]:p[i])+(i>0?p[i-1]:p[i])+p[i])/6);
+    var b=[],d=[];
+    for(var i=20;i<n;i++){
+        var s=0;for(var j=0;j<20;j++)s+=(20-j)*x1[i-j];
+        b.push(s/210);
     }
+    for(var i=14;i<b.length;i++){
+        var s=0;for(var j=0;j<15;j++)s+=b[i-j];
+        d.push(s/15);
+    }
+    var curB=b[b.length-1],curD=d[d.length-1],prevB=b.length>1?b[b.length-2]:curB;
+    return{color:curB>curD?'red':'green',b:curB,d:curD,bDir:curB>prevB?1:-1};
+}
 
-    // ========== 强制刷新（用于股票切换时） ==========
-    function forceRefresh() {
-        var changed = refreshData();
-        if (changed || currentSpectrum.length === 0) {
-            recalculate();
-        }
-        return changed;
+function calcProb(p,sp){
+    if(p.length<30)return{up:33,down:33,flat:34};
+    var look=20,top=sp.slice(0,C.topN),recent=p.slice(-look),pat=recent.map(function(v,i){return v/recent[0]}),sim=[];
+    for(var i=0;i<p.length-look-5;i++){
+        var win=p.slice(i,i+look),pat2=win.map(function(v,j){return v/win[0]}),diff=0;
+        for(var j=0;j<look;j++)diff+=Math.abs(pat2[j]-pat[j]);
+        var ret=(p[i+look+5]/p[i+look]-1)*100;
+        sim.push({diff:diff,ret:ret});
     }
+    sim.sort(function(a,b){return a.diff-b.diff});
+    var topSim=sim.slice(0,C.samples),up=0,down=0,flat=0;
+    for(var i=0;i<topSim.length;i++){
+        if(topSim[i].ret>0.5)up++;
+        else if(topSim[i].ret<-0.5)down++;
+        else flat++;
+    }
+    var total=topSim.length;
+    return{up:Math.round(up/total*100),down:Math.round(down/total*100),flat:Math.round(flat/total*100)};
+}
 
-    // ========== FFT 傅里叶变换 ==========
-    function fft(re, im) {
-        var N = re.length;
-        if (N <= 1) return;
-        
-        var j = 0;
-        for (var i = 0; i < N - 1; i++) {
-            if (i < j) {
-                var tr = re[i]; re[i] = re[j]; re[j] = tr;
-                var ti = im[i]; im[i] = im[j]; im[j] = ti;
-            }
-            var k = N >> 1;
-            while (k <= j) {
-                j -= k;
-                k >>= 1;
-            }
-            j += k;
-        }
-        
-        for (var len = 2; len <= N; len <<= 1) {
-            var ang = -2 * Math.PI / len;
-            var wlen_re = Math.cos(ang);
-            var wlen_im = Math.sin(ang);
-            for (var i = 0; i < N; i += len) {
-                var w_re = 1;
-                var w_im = 0;
-                for (var j = 0; j < len/2; j++) {
-                    var u_re = re[i + j];
-                    var u_im = im[i + j];
-                    var v_re = re[i + j + len/2] * w_re - im[i + j + len/2] * w_im;
-                    var v_im = re[i + j + len/2] * w_im + im[i + j + len/2] * w_re;
-                    re[i + j] = u_re + v_re;
-                    im[i + j] = u_im + v_im;
-                    re[i + j + len/2] = u_re - v_re;
-                    im[i + j + len/2] = u_im - v_im;
-                    var next_w_re = w_re * wlen_re - w_im * wlen_im;
-                    var next_w_im = w_re * wlen_im + w_im * wlen_re;
-                    w_re = next_w_re;
-                    w_im = next_w_im;
-                }
-            }
-        }
-    }
+function adjustProb(p0,rib){
+    var u=p0.up,d=p0.down,f=p0.flat;
+    if(rib.color=='red'&&rib.bDir==1){u+=15;d-=10;}
+    else if(rib.color=='green'&&rib.bDir==-1){u-=10;d+=15;}
+    else if(rib.color=='red'&&rib.bDir==-1){u+=5;d+=5;}
+    else if(rib.color=='green'&&rib.bDir==1){u+=5;d+=5;}
+    u=Math.min(85,Math.max(5,u));d=Math.min(85,Math.max(5,d));
+    return{up:u,down:d,flat:100-u-d};
+}
 
-    // ========== 计算频谱 ==========
-    function computeSpectrum(pricesData) {
-        if (!pricesData || pricesData.length < 10) return [];
-        
-        var n = pricesData.length;
-        var size = 1;
-        while (size < n) size <<= 1;
-        
-        var real = new Array(size).fill(0);
-        var imag = new Array(size).fill(0);
-        
-        var mean = 0;
-        for (var i = 0; i < n; i++) mean += pricesData[i];
-        mean /= n;
-        for (var i = 0; i < n; i++) real[i] = pricesData[i] - mean;
-        
-        fft(real, imag);
-        
-        var amplitudes = [];
-        var maxFreq = Math.min(50, n/2);
-        for (var i = 1; i < maxFreq; i++) {
-            var amp = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / n;
-            var period = n / i;
-            if (period >= 5 && period <= 300) {
-                amplitudes.push({
-                    period: Math.round(period),
-                    amplitude: parseFloat((amp * 100).toFixed(1))
-                });
-            }
+function drawRibbonBar(rib){
+    var cv=document.getElementById('ribbonCanvas');
+    if(!cv){
+        var can=document.querySelector('canvas');
+        if(can){
+            var div=document.createElement('div');div.style.margin='8px 0';
+            div.innerHTML='<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px"></canvas>';
+            can.parentElement.insertBefore(div,can.nextSibling);
         }
-        
-        amplitudes.sort(function(a, b) { 
-            if (b.amplitude === a.amplitude) {
-                return a.period - b.period;
-            }
-            return b.amplitude - a.amplitude; 
-        });
-        
-        return amplitudes.slice(0, 10);
     }
+    cv=document.getElementById('ribbonCanvas');
+    if(!cv)return;
+    cv.width=cv.parentElement.clientWidth;cv.height=40;
+    var ctx=cv.getContext('2d');
+    ctx.fillStyle=rib.color=='red'?'#f87171':'#4ade80';
+    ctx.fillRect(0,0,cv.width,40);
+    ctx.fillStyle='white';ctx.font='10px monospace';
+    ctx.fillText('彩带: '+rib.color+' | B线: '+(rib.bDir==1?'向上':'向下'),10,25);
+}
 
-    // ========== 计算波动率 ==========
-    function computeVolatility(pricesData) {
-        if (pricesData.length < 2) return 0.02;
-        var sum = 0;
-        for (var i = 1; i < pricesData.length; i++) {
-            var ret = Math.abs((pricesData[i] - pricesData[i-1]) / pricesData[i-1]);
-            sum += ret;
-        }
-        return sum / (pricesData.length - 1);
+function drawHologram(){
+    if(!window.myChart)return;
+    var ds=window.myChart.data.datasets,orig=null;
+    for(var i=0;i<ds.length;i++){
+        var lbl=ds[i].label||'';
+        if((lbl.indexOf('收盘')>=0||lbl=='close')&&ds[i].data){orig=ds[i].data;break;}
     }
+    if(!orig||orig.length<20)return;
+    var top=spectrum.slice(0,3),totalAmp=0;
+    for(var i=0;i<top.length;i++)totalAmp+=top[i].amplitude;
+    var last=orig[orig.length-1],mean=0;
+    for(var i=0;i<orig.length;i++)mean+=orig[i];mean/=orig.length;
+    var pred=[];
+    for(var d=1;d<=20;d++){
+        var sum=0,wSum=0;
+        for(var i=0;i<top.length;i++){
+            var per=top[i].period,amp=top[i].amplitude;
+            if(per>1){sum+=amp*Math.cos(d*2*Math.PI/per);wSum+=amp;}
+        }
+        var val=last;if(wSum>0)val=last+(sum/wSum)*(last-mean)*0.3;
+        pred.push(parseFloat(val.toFixed(2)));
+    }
+    var full=Array(orig.length).fill(null);
+    for(var i=0;i<pred.length;i++)full.push(pred[i]);
+    var idx=-1;
+    for(var i=0;i<ds.length;i++)if(ds[i].label=='🔮 全息预测线'){idx=i;break;}
+    if(idx>=0)ds[idx].data=full;
+    else ds.push({label:'🔮 全息预测线',data:full,borderColor:'#a855f7',borderWidth:2,borderDash:[8,4],pointRadius:0,fill:false,tension:0.1});
+    window.myChart.update();
+}
 
-    // ========== 计算概率（使用Top3周期加权平均） ==========
-    function computeProbability(pricesData, spectrum) {
-        if (!pricesData || pricesData.length < 30) {
-            return { up: 33, down: 33, flat: 34 };
-        }
-        
-        var lookback = 20;
-        var topPeriods = spectrum.slice(0, CONFIG.topPeriodsCount);
-        
-        // 如果没有频谱数据，用默认
-        if (topPeriods.length === 0) {
-            topPeriods = [{ period: 50, amplitude: 100 }];
-        }
-        
-        // 计算加权权重
-        var totalAmp = 0;
-        for (var i = 0; i < topPeriods.length; i++) {
-            totalAmp += topPeriods[i].amplitude;
-        }
-        var weights = [];
-        for (var i = 0; i < topPeriods.length; i++) {
-            weights.push(topPeriods[i].amplitude / totalAmp);
-        }
-        
-        // 获取最近的价格形态
-        var recent = pricesData.slice(-lookback);
-        var recentPattern = [];
-        for (var i = 0; i < lookback; i++) {
-            recentPattern.push(recent[i] / recent[0]);
-        }
-        
-        // 在历史中寻找相似形态
-        var similarities = [];
-        var maxStart = Math.max(0, pricesData.length - 1000);
-        for (var i = maxStart; i < pricesData.length - lookback - 5; i++) {
-            var windowPrices = pricesData.slice(i, i + lookback);
-            var pattern = [];
-            for (var j = 0; j < lookback; j++) {
-                pattern.push(windowPrices[j] / windowPrices[0]);
-            }
-            var diff = 0;
-            for (var j = 0; j < lookback; j++) {
-                diff += Math.abs(pattern[j] - recentPattern[j]);
-            }
-            var futureReturn = (pricesData[i + lookback + 5] / pricesData[i + lookback] - 1) * 100;
-            similarities.push({ diff: diff, futureReturn: futureReturn });
-        }
-        
-        similarities.sort(function(a, b) {
-            if (a.diff === b.diff) {
-                return Math.abs(a.futureReturn) - Math.abs(b.futureReturn);
-            }
-            return a.diff - b.diff;
-        });
-        
-        var topMatches = similarities.slice(0, CONFIG.probabilitySamples);
-        
-        // 波动率调整
-        var volatility = computeVolatility(pricesData);
-        var upThreshold = 0.5;
-        var downThreshold = -0.5;
-        if (volatility > 0.03) {
-            upThreshold = 0.3;
-            downThreshold = -0.3;
-        } else if (volatility < 0.01) {
-            upThreshold = 0.8;
-            downThreshold = -0.8;
-        }
-        
-        var weightedUp = 0, weightedDown = 0, weightedFlat = 0;
-        var totalWeight = 0;
-        
-        for (var i = 0; i < topMatches.length; i++) {
-            var match = topMatches[i];
-            var weight = 1 / (1 + match.diff);
-            totalWeight += weight;
-            if (match.futureReturn > upThreshold) {
-                weightedUp += weight;
-            } else if (match.futureReturn < downThreshold) {
-                weightedDown += weight;
-            } else {
-                weightedFlat += weight;
-            }
-        }
-        
-        if (totalWeight === 0) {
-            return { up: 33, down: 33, flat: 34 };
-        }
-        
-        return {
-            up: Math.round(weightedUp / totalWeight * 100),
-            down: Math.round(weightedDown / totalWeight * 100),
-            flat: Math.round(weightedFlat / totalWeight * 100)
-        };
+function updatePanel(){
+    var panel=document.getElementById('fourierPanel');
+    if(!panel)return;
+    var topHtml='',sym=getSymbol();
+    for(var i=0;i<spectrum.slice(0,3).length;i++){
+        var s=spectrum[i];
+        topHtml+='<span style="background:#facc15;color:#0f172a;padding:4px 12px;border-radius:20px;margin:4px;font-weight:bold">'+s.period+'天 ('+s.amplitude+'%)</span>';
     }
+    var adj=adjustProb(prob,ribbon);
+    panel.innerHTML='<div class="fourier-content"><div style="display:flex;justify-content:space-between;flex-wrap:wrap"><h3 style="color:#facc15;margin:0">📐 Z轴｜'+sym+'</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white;font-size:0.7rem">🔄</button></div><div style="margin:12px 0">🎯 主导周期: '+topHtml+'</div><div style="display:flex;gap:20px;flex-wrap:wrap"><div><div style="color:#94a3b8;font-size:0.7rem">📊 原始概率</div><div><span style="color:#4ade80">▲'+prob.up+'%</span> <span style="color:#f87171">▼'+prob.down+'%</span> <span style="color:#94a3b8">—'+prob.flat+'%</span></div></div><div><div style="color:#facc15;font-size:0.7rem">🎗️ 彩带修正</div><div><span style="color:#4ade80">▲'+adj.up+'%</span> <span style="color:#f87171">▼'+adj.down+'%</span> <span style="color:#94a3b8">—'+adj.flat+'%</span></div></div><div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带</div><div style="color:'+(ribbon.color=='red'?'#f87171':'#4ade80')+'">'+ribbon.color+' | '+(ribbon.bDir==1?'B向上':'B向下')+'</div></div></div><div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 固定'+C.fixedLen+'天 | Top'+C.topN+'周期加权</div></div>';
+    document.getElementById('refreshBtn').onclick=function(){refreshAll();};
+}
 
-    // ========== 重新计算所有 ==========
-    function recalculate() {
-        if (!currentPrices || currentPrices.length === 0) {
-            console.warn('无数据，无法计算');
-            return false;
-        }
-        
-        console.log('📐 重新计算 FFT...');
-        currentSpectrum = computeSpectrum(currentPrices);
-        currentProbability = computeProbability(currentPrices, currentSpectrum);
-        
-        updatePanelContent();
-        tryDrawHologramLine();
-        
-        return true;
-    }
+function refreshAll(){
+    var raw=getPrices();
+    if(raw.length)prices=raw.length>C.fixedLen?raw.slice(-C.fixedLen):raw;
+    spectrum=getSpectrum(prices);
+    prob=calcProb(prices,spectrum);
+    ribbon=calcRibbon(prices);
+    updatePanel();
+    drawRibbonBar(ribbon);
+    drawHologram();
+}
 
-    // ========== 更新面板内容 ==========
-    function updatePanelContent() {
-        var panel = document.getElementById('fourierPanel');
-        if (!panel) return;
-        
-        var topPeriods = currentSpectrum.slice(0, CONFIG.topPeriodsCount);
-        var otherPeriods = currentSpectrum.slice(CONFIG.topPeriodsCount, 6);
-        
-        var topHtml = '';
-        for (var i = 0; i < topPeriods.length; i++) {
-            topHtml += '<span style="display: inline-block; background: #facc15; color: #0f172a; padding: 4px 12px; border-radius: 20px; margin: 4px; font-weight: bold;"><strong>' + topPeriods[i].period + '天</strong> <span style="font-weight: normal;">(' + topPeriods[i].amplitude + '%)</span></span>';
-        }
-        
-        var otherHtml = '';
-        for (var i = 0; i < otherPeriods.length; i++) {
-            otherHtml += '<span style="display: inline-block; background: #334155; padding: 3px 10px; border-radius: 20px; margin: 3px; font-size: 0.7rem;"><strong>' + otherPeriods[i].period + '天</strong> (' + otherPeriods[i].amplitude + '%)</span>';
-        }
-        
-        var contentDiv = panel.querySelector('.fourier-content');
-        if (contentDiv) {
-            contentDiv.innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap;">
-                    <h3 style="margin: 0; color: #facc15; font-size: 1rem;">📐 Z轴视角｜${currentSymbol} 傅里叶频谱分析</h3>
-                    <button id="refreshFourierBtn" style="background: #3b82f6; border: none; padding: 4px 12px; border-radius: 20px; color: white; font-size: 0.7rem; cursor: pointer;">🔄 重算</button>
-                </div>
-                
-                <div style="display: flex; flex-wrap: wrap; gap: 16px;">
-                    <div style="flex: 2; min-width: 180px;">
-                        <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 6px;">🎯 主导周期（加权平均用 Top${CONFIG.topPeriodsCount}）</div>
-                        <div style="display: flex; flex-wrap: wrap; gap: 6px;">${topHtml || '<span style="color: #64748b;">计算中...</span>'}</div>
-                        ${otherHtml ? '<div style="margin-top: 8px;"><span style="color: #64748b; font-size: 0.6rem;">其他周期：</span>' + otherHtml + '</div>' : ''}
-                    </div>
-                    
-                    <div style="flex: 1; min-width: 130px;">
-                        <div style="color: #94a3b8; font-size: 0.7rem; margin-bottom: 6px;">📊 未来5日概率（Top3加权）</div>
-                        <div style="display: flex; gap: 15px;">
-                            <div><span style="color: #4ade80;">▲ 涨</span> <strong style="font-size: 1.2rem;">${currentProbability.up}%</strong></div>
-                            <div><span style="color: #f87171;">▼ 跌</span> <strong style="font-size: 1.2rem;">${currentProbability.down}%</strong></div>
-                            <div><span style="color: #94a3b8;">— 平</span> <strong style="font-size: 1.2rem;">${currentProbability.flat}%</strong></div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #334155; font-size: 0.6rem; color: #64748b; display: flex; justify-content: space-between; flex-wrap: wrap;">
-                    <span>⚡ 基于固定长度 ${CONFIG.fixedDataLength}天数据 | Top${CONFIG.topPeriodsCount}周期加权平均</span>
-                    <span>📅 数据长度: ${currentPrices.length}天</span>
-                </div>
-            `;
-            
-            var refreshBtn = document.getElementById('refreshFourierBtn');
-            if (refreshBtn) {
-                refreshBtn.onclick = function() {
-                    console.log('🔄 用户点击重算按钮');
-                    recalculate();
-                };
-            }
-        }
-    }
-
-    // ========== 绘制全息预测线 ==========
-    function tryDrawHologramLine() {
-        if (!currentSpectrum || currentSpectrum.length === 0) return;
-        
-        var chart = null;
-        if (window.myChart) {
-            chart = window.myChart;
-        } else {
-            var canvases = document.querySelectorAll('canvas');
-            for (var i = 0; i < canvases.length; i++) {
-                if (canvases[i].chart) {
-                    chart = canvases[i].chart;
-                    break;
-                }
-            }
-        }
-        
-        if (!chart || !chart.data) {
-            console.log('无法检测到图表实例，跳过画线');
-            return;
-        }
-        
-        // 获取原始数据
-        var originalData = null;
-        var datasets = chart.data.datasets;
-        for (var i = 0; i < datasets.length; i++) {
-            var ds = datasets[i];
-            var label = ds.label || '';
-            if (label === '收盘价' || label === 'close' || label === '价格' || label.indexOf('收盘') >= 0 || ds.type === 'line') {
-                originalData = ds.data;
-                break;
-            }
-        }
-        
-        if (!originalData || originalData.length < 20) return;
-        
-        // 用Top3周期加权计算预测
-        var topPeriods = currentSpectrum.slice(0, CONFIG.topPeriodsCount);
-        var totalAmp = 0;
-        for (var i = 0; i < topPeriods.length; i++) totalAmp += topPeriods[i].amplitude;
-        
-        var n = originalData.length;
-        var lastPrice = originalData[n - 1];
-        var mean = 0;
-        for (var i = 0; i < n; i++) mean += originalData[i];
-        mean /= n;
-        
-        var predictionDays = 20;
-        var predictions = [];
-        for (var day = 1; day <= predictionDays; day++) {
-            var sum = 0;
-            var weightSum = 0;
-            for (var i = 0; i < topPeriods.length; i++) {
-                var period = topPeriods[i].period;
-                var amp = topPeriods[i].amplitude;
-                if (period > 1) {
-                    var angle = (day * 2 * Math.PI) / period;
-                    sum += amp * Math.cos(angle);
-                    weightSum += amp;
-                }
-            }
-            var predValue = lastPrice;
-            if (weightSum > 0) {
-                var change = (sum / weightSum) * (lastPrice - mean) * 0.3;
-                predValue = lastPrice + change;
-            }
-            predictions.push(parseFloat(predValue.toFixed(2)));
-        }
-        
-        var fullPredictions = new Array(originalData.length).fill(null);
-        for (var i = 0; i < predictions.length; i++) fullPredictions.push(predictions[i]);
-        
-        // 更新或添加预测线
-        var existingIndex = -1;
-        for (var i = 0; i < datasets.length; i++) {
-            if (datasets[i].label === '🔮 全息预测线 (Z轴)') {
-                existingIndex = i;
-                break;
-            }
-        }
-        
-        if (existingIndex >= 0) {
-            chart.data.datasets[existingIndex].data = fullPredictions;
-        } else {
-            chart.data.datasets.push({
-                label: '🔮 全息预测线 (Z轴)',
-                data: fullPredictions,
-                borderColor: '#a855f7',
-                borderWidth: 2,
-                borderDash: [8, 4],
-                pointRadius: 0,
-                fill: false,
-                tension: 0.1
-            });
-        }
-        chart.update();
-        console.log('✅ 全息预测线已更新');
-    }
-
-    // ========== 监听股票切换 ==========
-    function watchSymbolChange() {
-        // 监听股票代码输入框
-        var symbolInput = document.getElementById('symbol');
-        if (symbolInput) {
-            symbolInput.addEventListener('change', function() {
-                console.log('📊 股票代码已切换至:', this.value);
-                setTimeout(function() {
-                    forceRefresh();
-                }, 1000);
-            });
-        }
-        
-        // 监听分析按钮
-        var btns = document.querySelectorAll('button');
-        for (var i = 0; i < btns.length; i++) {
-            var btn = btns[i];
-            var btnText = btn.innerText || '';
-            if (btnText.indexOf('分析') >= 0 || btnText.indexOf('分析') >= 0 || btn.id === 'runBtn' || btn.id === 'analyzeBtn') {
-                btn.addEventListener('click', function() {
-                    setTimeout(function() {
-                        forceRefresh();
-                    }, 1500);
-                });
-            }
-        }
-        
-        // 监听页面可见性变化（从后台回来时刷新）
-        document.addEventListener('visibilitychange', function() {
-            if (!document.hidden) {
-                setTimeout(function() {
-                    forceRefresh();
-                }, 500);
-            }
-        });
-    }
-
-    // ========== 添加主面板 ==========
-    function addMainPanel() {
-        if (document.getElementById('fourierPanel')) return;
-        
-        var container = document.querySelector('.container') || document.body;
-        var panel = document.createElement('div');
-        panel.id = 'fourierPanel';
-        panel.style.cssText = 'margin: 16px; padding: 16px; background: #1e293b; border-radius: 16px; border: 1px solid #334155; color: #e2e8f0;';
-        panel.innerHTML = '<div class="fourier-content">加载中...</div>';
-        
-        if (container.firstChild) {
-            container.insertBefore(panel, container.firstChild);
-        } else {
-            container.appendChild(panel);
-        }
-        
-        return panel;
-    }
-
-    // ========== 初始化 ==========
-    function init() {
-        console.log('✅ Fourier Z-Axis Module v4.0 启动');
-        
-        addMainPanel();
-        
-        // 等待图表加载
-        setTimeout(function() {
-            forceRefresh();
-            watchSymbolChange();
-        }, 2000);
-        
-        isInitialized = true;
-    }
-
-    // 启动
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+function init(){
+    var p=document.createElement('div');p.id='fourierPanel';p.style.cssText='margin:16px;padding:16px;background:#1e293b;border-radius:16px';
+    var c=document.querySelector('.container');if(c)c.insertBefore(p,c.firstChild);
+    refreshAll();
+    var inp=document.getElementById('symbol');if(inp)inp.addEventListener('change',function(){setTimeout(refreshAll,1000);});
+    var btns=document.querySelectorAll('button');for(var i=0;i<btns.length;i++)if(btns[i].innerText.indexOf('分析')>=0)btns[i].addEventListener('click',function(){setTimeout(refreshAll,1500);});
+}
+if(document.readyState=='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
