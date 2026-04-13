@@ -1,31 +1,47 @@
 (function(){
-console.log('📐 Z轴模块 v8.0 加权平均版');
+console.log('📐 Z轴模块 v9.0 稳定版｜无随机数据');
 
-var C={fixedLen:200, topN:5};  // topN仅用于显示，计算用全部周期
+var C={fixedLen:200, topN:5};
 var prices=[], spectrum=[], prob={up:33,down:33,flat:34}, ribbon={color:'gray',trend:'flat',strength:0};
+var dataLoaded = false;  // 标记是否已成功加载数据
 
 function getSymbol(){try{var i=document.getElementById('symbol');return i&&i.value?i.value.trim().toUpperCase():'STK'}catch(e){return'STK'}}
 
-function getPrices(){
+// 一次性从图表或表格加载数据，不再调用随机模拟
+function loadPricesOnce(){
+    if(dataLoaded && prices.length>0) return prices;
     try{
-        if(window.myChart&&window.myChart.data)
+        // 优先从 Chart.js 获取
+        if(window.myChart && window.myChart.data)
             for(var i=0;i<window.myChart.data.datasets.length;i++){
-                var ds=window.myChart.data.datasets[i],l=ds.label||'';
+                var ds=window.myChart.data.datasets[i], l=ds.label||'';
                 if((l.indexOf('收盘')>=0||l=='close'||l=='价格')&&ds.data){
                     var d=ds.data.filter(function(v){return v!==null&&!isNaN(v)&&v>0});
-                    if(d.length>20) return d.length>C.fixedLen?d.slice(-C.fixedLen):d;
+                    if(d.length>20){
+                        prices = d.length>C.fixedLen ? d.slice(-C.fixedLen) : d;
+                        dataLoaded = true;
+                        console.log('从图表加载数据，长度:',prices.length);
+                        return prices;
+                    }
                 }
             }
-        var t=document.querySelectorAll('table tbody tr'),p=[];
+        // 后备：从表格获取
+        var t=document.querySelectorAll('table tbody tr'), p=[];
         if(t.length>10)
             for(var i=0;i<t.length&&i<500;i++){
                 var v=parseFloat(t[i].cells[1]?.innerText.replace(/[^0-9.-]/g,''));
                 if(!isNaN(v)&&v>0&&v<1e4) p.push(v);
             }
-        if(p.length>20) return p.length>C.fixedLen?p.slice(-C.fixedLen):p;
-        var b=150,mp=[]; for(var i=0;i<C.fixedLen;i++){b+=(Math.random()-0.5)*3; b=Math.max(80,Math.min(300,b)); mp.push(parseFloat(b.toFixed(2)));}
-        return mp;
-    }catch(e){return[]}
+        if(p.length>20){
+            prices = p.length>C.fixedLen ? p.slice(-C.fixedLen) : p;
+            dataLoaded = true;
+            console.log('从表格加载数据，长度:',prices.length);
+            return prices;
+        }
+        // 实在无数据，显示错误，不使用随机数据
+        console.error('无法获取价格数据，请检查网络或刷新页面');
+        return [];
+    }catch(e){console.error(e); return [];}
 }
 
 function fft(r,i){
@@ -64,30 +80,8 @@ function getSpectrum(p){
             phase: Math.atan2(im[i], re[i])
         });
     }
-    amps.sort(function(a,b){return b.amplitude - a.amplitude}); // 展示用
-    return amps.slice(0, C.topN); // 保留前N个用于显示，但概率计算会用全部周期
-}
-
-// 计算加权概率：基于所有周期（不仅仅是前几个）的振幅和相位
-function computeWeightedProb(prices, fullSpectrum){
-    // 注意：fullSpectrum 在调用时应该传入原始的完整周期列表（未截断）
-    // 但由于性能，我们可以在 getSpectrum 中返回全部周期，或者重新计算一次
-    // 简单方法：在 refreshAll 中另外存储完整周期数组
-    if(!fullSpectrum || fullSpectrum.length===0) return {up:50, down:25, flat:25};
-    var totalAmp=0;
-    for(var i=0;i<fullSpectrum.length;i++) totalAmp+=fullSpectrum[i].amplitude;
-    if(totalAmp===0) return {up:50, down:25, flat:25};
-    var weightedDir=0;
-    for(var i=0;i<fullSpectrum.length;i++){
-        var s=fullSpectrum[i];
-        var phaseCos=Math.cos(s.phase); // +1向上，-1向下
-        weightedDir += (s.amplitude/totalAmp) * phaseCos;
-    }
-    var upProb = 50 + weightedDir * 35;
-    upProb = Math.min(85, Math.max(15, upProb));
-    var downProb = Math.max(5, Math.min(50, 100 - upProb - 20));
-    var flatProb = 100 - upProb - downProb;
-    return {up:Math.round(upProb), down:Math.round(downProb), flat:Math.round(flatProb)};
+    amps.sort(function(a,b){return b.amplitude - a.amplitude});
+    return amps;
 }
 
 function calcRibbon(p){
@@ -110,6 +104,25 @@ function calcRibbon(p){
     var trend=curB>prevB?'up':'down';
     var strength=Math.min(100, Math.abs((curB-curD)/curD)*100);
     return {color:color, trend:trend, strength:strength};
+}
+
+// 加权概率计算（基于所有周期）
+function computeWeightedProb(fullSpectrum){
+    if(!fullSpectrum || fullSpectrum.length===0) return {up:50, down:25, flat:25};
+    var totalAmp=0;
+    for(var i=0;i<fullSpectrum.length;i++) totalAmp+=fullSpectrum[i].amplitude;
+    if(totalAmp===0) return {up:50, down:25, flat:25};
+    var weightedDir=0;
+    for(var i=0;i<fullSpectrum.length;i++){
+        var s=fullSpectrum[i];
+        var phaseCos=Math.cos(s.phase);
+        weightedDir += (s.amplitude/totalAmp) * phaseCos;
+    }
+    var upProb = 50 + weightedDir * 35;
+    upProb = Math.min(85, Math.max(15, upProb));
+    var downProb = Math.max(5, Math.min(50, 100 - upProb - 20));
+    var flatProb = 100 - upProb - downProb;
+    return {up:Math.round(upProb), down:Math.round(downProb), flat:Math.round(flatProb)};
 }
 
 function drawRibbonBar(rib){
@@ -168,14 +181,23 @@ function drawHologram(){
     window.myChart.update();
 }
 
-// 存储完整周期列表（用于加权计算）
 var fullSpectrum = [];
 
 function refreshAll(){
     try{
-        var raw=getPrices();
-        if(raw.length) prices=raw;
-        // 获取完整的周期列表（不截断，取所有符合条件的周期）
+        // 如果数据未加载，尝试加载一次；如果已加载，直接使用现有prices
+        if(!dataLoaded || prices.length===0){
+            var tmp = loadPricesOnce();
+            if(tmp.length===0){
+                console.error('无数据，无法刷新');
+                return;
+            }
+        }
+        if(prices.length===0) return;
+        // 固定长度
+        if(prices.length > C.fixedLen) prices = prices.slice(-C.fixedLen);
+        
+        // 重新计算频谱（基于固定数据）
         var n=prices.length, size=1; while(size<n) size<<=1;
         var re=Array(size).fill(0), im=Array(size).fill(0), mean=0;
         for(var i=0;i<n;i++) mean+=prices[i]; mean/=n;
@@ -191,15 +213,15 @@ function refreshAll(){
             });
         }
         allAmps.sort(function(a,b){return b.amplitude - a.amplitude});
-        fullSpectrum = allAmps; // 全部周期
-        spectrum = allAmps.slice(0, C.topN); // 仅用于显示
+        fullSpectrum = allAmps;
+        spectrum = allAmps.slice(0, C.topN);
         
         ribbon = calcRibbon(prices);
-        prob = computeWeightedProb(prices, fullSpectrum);
+        prob = computeWeightedProb(fullSpectrum);
         updatePanel();
         drawRibbonBar(ribbon);
         drawHologram();
-        console.log('✅ 刷新完成 | 加权概率 上升:'+prob.up+'%');
+        console.log('刷新完成 | 数据长度固定:', prices.length);
     }catch(e){ console.error('刷新错误',e); }
 }
 
@@ -221,18 +243,19 @@ function updatePanel(){
     ribbonText+=ribbon.trend=='up'?' ↑':' ↓';
     
     panel.innerHTML='<div><div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜'+sym+'</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>'+
-        '<div style="margin:12px 0">🎯 主导周期(振幅Top'+C.topN+'): '+topHtml+'</div>'+
+        '<div style="margin:12px 0">🎯 主导周期: '+topHtml+'</div>'+
         '<div style="display:flex;gap:20px;flex-wrap:wrap">'+
         '<div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率(加权平均)</div>'+
         '<div><span style="color:#4ade80">▲ '+prob.up+'%</span> <span style="color:#f87171">▼ '+prob.down+'%</span> <span style="color:#94a3b8">— '+prob.flat+'%</span></div></div>'+
         '<div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>'+ribbonText+' | 强度:'+Math.round(ribbon.strength)+'%</div></div></div>'+
-        '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 概率基于所有周期振幅加权 | 刷新稳定</div></div>';
+        '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 数据固定，无随机模拟 | 刷新结果稳定</div></div>';
     
     var btn=document.getElementById('refreshBtn');
     if(btn) btn.onclick=function(){ refreshAll(); };
 }
 
 function init(){
+    loadPricesOnce();   // 预先加载数据
     refreshAll();
     var inp=document.getElementById('symbol');
     if(inp) inp.addEventListener('change', function(){ setTimeout(refreshAll,1000); });
