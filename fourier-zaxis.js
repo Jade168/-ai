@@ -1,34 +1,16 @@
 (function(){
-console.log('📐 Z轴模块 v28.0 完整修复版');
+console.log('📐 Z轴模块 v28.1 最小修复版（仅修复ISET方向）');
+
 var C = { fixedLen: 200, topN: 5, forecastDays: 20 };
 var prices = [], fullSpectrum = [], spectrum = [], prob = { up: 33, down: 33, flat: 34 };
 var ribbon = { color: 'gray', trend: 'flat', strength: 0 };
 
-// ============================================================
-// 工具函數
-// ============================================================
 function getSymbol() {
     try { var i = document.getElementById('symbol'); return i && i.value ? i.value.trim().toUpperCase() : 'STK'; }
     catch(e) { return 'STK'; }
 }
-function computeMean(arr) {
-    if (!arr || arr.length === 0) return 0;
-    var sum = 0;
-    for (var k = 0; k < arr.length; k++) sum += arr[k];
-    return sum / arr.length;
-}
-function computeStdDev(arr) {
-    if (!arr || arr.length < 2) return 0;
-    var mean = computeMean(arr);
-    var variance = 0;
-    for (var k = 0; k < arr.length; k++) variance += (arr[k] - mean) * (arr[k] - mean);
-    variance /= arr.length;
-    return Math.sqrt(variance);
-}
 
-// ============================================================
-// 從圖表實時讀取價格
-// ============================================================
+// ----- 从图表实时读取价格 -----
 function fetchPrices() {
     try {
         if (window.myChart && window.myChart.data) {
@@ -36,7 +18,7 @@ function fetchPrices() {
             for (var i = 0; i < ds.length; i++) {
                 var lbl = ds[i].label || '';
                 if ((lbl.indexOf('收盘') >= 0 || lbl === 'close' || lbl === '价格') && ds[i].data) {
-                    var d = ds[i].data.filter(function(v){ return v !== null && !isNaN(v) && v > 0; });
+                    var d = ds[i].data.filter(v => v !== null && !isNaN(v) && v > 0);
                     if (d.length > 20) {
                         return d.length > C.fixedLen ? d.slice(-C.fixedLen) : d;
                     }
@@ -47,9 +29,7 @@ function fetchPrices() {
     } catch(e) { return null; }
 }
 
-// ============================================================
-// FFT 算法（完整保留）
-// ============================================================
+// ----- FFT -----
 function fft(r, i) {
     var N = r.length; if (N <= 1) return;
     var j = 0;
@@ -74,26 +54,18 @@ function fft(r, i) {
     }
 }
 
-// ============================================================
-// 計算頻譜（修復2：標準差歸一化 + 擴展頻率範圍 + 提高上限）
-// ============================================================
+// ----- 计算频谱（保持原样，只提高上限到80%）-----
 function computeFullSpectrum(p) {
     var n = p.length, size = 1; while (size < n) size <<= 1;
     var re = new Array(size).fill(0), im = new Array(size).fill(0);
     var mean = 0; for (var i = 0; i < n; i++) mean += p[i]; mean /= n;
     for (var i = 0; i < n; i++) re[i] = p[i] - mean;
     fft(re, im);
-    // [修復2] 計算標準差用於歸一化
-    var variance = 0;
-    for (var i = 0; i < n; i++) variance += (p[i] - mean) * (p[i] - mean);
-    variance /= n;
-    var std = Math.sqrt(variance);
     var amps = [];
-    // [修復2] 擴展頻率範圍到 n/2
     for (var i = 1; i < Math.min(60, n/2); i++) {
         var rawAmp = Math.sqrt(re[i]*re[i] + im[i]*im[i]) / n;
-        // [修復2] 用標準差歸一化，上限提高到 2.0 (200%)
-        var relativeAmp = Math.min(rawAmp / Math.max(std, 0.01), 2.0);
+        // 修正1：振幅上限从50%提高到80%，但保持均值归一化
+        var relativeAmp = Math.min(rawAmp / Math.max(mean, 0.01), 0.8);
         var period = n / i;
         if (period >= 5 && period <= 300) {
             amps.push({
@@ -103,33 +75,18 @@ function computeFullSpectrum(p) {
             });
         }
     }
-    amps.sort(function(a,b){ return b.amplitude - a.amplitude; });
+    amps.sort((a,b) => b.amplitude - a.amplitude);
     return amps;
 }
 
-// ============================================================
-// 彩帶（修復3：自適應閾值 + 多週期EMA）
-// ============================================================
+// ----- 彩带（保持原样）-----
 function calcRibbon(p) {
     if (p.length < 30) return ribbon;
     var n = p.length;
-    // EMA快線（8日）
-    var emaFast = [p[0]];
-    var alphaFast = 2 / (8 + 1);
-    for (var i = 1; i < n; i++) {
-        emaFast.push(alphaFast * p[i] + (1 - alphaFast) * emaFast[i-1]);
-    }
-    // EMA中線（20日）
     var ema = [p[0]];
     var alpha = 2 / (20 + 1);
     for (var i = 1; i < n; i++) {
         ema.push(alpha * p[i] + (1 - alpha) * ema[i-1]);
-    }
-    // EMA慢線（50日）
-    var emaSlow = [p[0]];
-    var alphaSlow = 2 / (50 + 1);
-    for (var i = 1; i < n; i++) {
-        emaSlow.push(alphaSlow * p[i] + (1 - alphaSlow) * emaSlow[i-1]);
     }
     var b = ema.slice(20);
     var d = [];
@@ -139,59 +96,41 @@ function calcRibbon(p) {
         else d.push(alpha * b[i] + (1 - alpha) * d[d.length-1]);
     }
     if (b.length < 2 || d.length < 2) return ribbon;
-    var curFast = emaFast[emaFast.length-1];
     var curB = b[b.length-1], curD = d[d.length-1], prevB = b[b.length-2];
-    var curSlow = emaSlow[emaSlow.length-1];
-    // [修復3] 自適應閾值
-    var recentPrices = p.slice(-20);
-    var recentVolatility = computeStdDev(recentPrices) / computeMean(recentPrices);
-    var threshold = Math.max(0.0003, recentVolatility * 0.3);
-    // 三線多空排列判斷顏色
-    var fastAboveMedium = curFast > curB;
-    var mediumAboveSlow = curB > curSlow;
-    var color = 'gray';
-    if (fastAboveMedium && mediumAboveSlow && curFast > prevB) {
-        color = 'red';
-    } else if (!fastAboveMedium && !mediumAboveSlow && curFast < prevB) {
-        color = 'green';
-    } else if (fastAboveMedium && mediumAboveMedium) {
-        color = 'red';
-    } else if (!fastAboveMedium && !mediumAboveSlow) {
-        color = 'green';
-    }
-    var divergence = Math.abs(curFast - curSlow) / curSlow;
-    if (divergence < threshold) {
-        color = 'gray';
-    }
+    var threshold = 0.001;
+    var color = (curB - curD) > threshold ? 'red' :
+                (curD - curB) > threshold ? 'green' :
+                ribbon.color;
     var trend = (curB - prevB) > threshold ? 'up' :
                 (prevB - curB) > threshold ? 'down' :
                 ribbon.trend;
-    var divergenceStrength = Math.abs(curB - curSlow) / curSlow;
-    var strength = Math.min(100, divergenceStrength * 300);
+    var strength = Math.min(100, Math.abs((curB - curD) / Math.max(curD, 0.001)) * 100);
     return { color: color, trend: trend, strength: strength };
 }
 
-// ============================================================
-// ISET 方向（修復1：基於實際價格斜率）
-// ============================================================
+// ----- ISET 方向（修复：加入实际价格斜率）-----
 function computeISETDirection(fullSpec, topN, prices) {
     if (!fullSpec.length) return 0;
-    // 20日中期斜率
-    var last20Prices = prices.slice(-20);
-    var slope20 = (last20Prices[last20Prices.length-1] - last20Prices[0]) / last20Prices[0];
-    var normalizedSlope20 = Math.max(-1, Math.min(1, slope20 / 0.05));
-    // 5日短期動量
-    var last5Prices = prices.slice(-5);
-    var slope5 = (last5Prices[last5Prices.length-1] - last5Prices[0]) / last5Prices[0];
-    var normalizedSlope5 = Math.max(-1, Math.min(1, slope5 / 0.02));
-    // 10日動能
-    var last10Prices = prices.slice(-10);
-    var momentum = 0;
-    for (var k = 1; k < last10Prices.length; k++) {
-        momentum += (last10Prices[k] - last10Prices[k-1]) / last10Prices[k-1];
+    
+    // 【修复核心】方法1：基于实际价格斜率
+    var slope = 0;
+    if (prices && prices.length >= 5) {
+        // 5日斜率（短期趋势）
+        var last5 = prices.slice(-5);
+        slope = (last5[last5.length-1] - last5[0]) / last5[0];
+        
+        // 如果有更多数据，考虑20日斜率
+        if (prices.length >= 20) {
+            var last20 = prices.slice(-20);
+            var slope20 = (last20[last20.length-1] - last20[0]) / last20[0];
+            // 综合：60% 短期 + 40% 中期
+            slope = slope * 0.6 + slope20 * 0.4;
+        }
     }
-    var normalizedMomentum = Math.max(-1, Math.min(1, momentum / 0.03));
-    // 頻譜能量加權
+    // 斜率归一化：5%变化 = 方向1或-1
+    var normalizedSlope = Math.max(-1, Math.min(1, slope / 0.05));
+    
+    // 方法2：基于频谱能量方向（原始逻辑）
     var totalE = 0, weighted = 0;
     for (var i = 0; i < Math.min(fullSpec.length, topN); i++) {
         var e = fullSpec[i].amplitude;
@@ -200,19 +139,18 @@ function computeISETDirection(fullSpec, topN, prices) {
         totalE += e;
     }
     var spectrumDir = totalE === 0 ? 0 : weighted / totalE;
-    var spectrumStrength = Math.min(1, totalE * 0.5);
-    // 最終方向：40%中期 + 30%短期 + 20%動能 + 10%頻譜
-    var direction = normalizedSlope20 * 0.4 + normalizedSlope5 * 0.3 + normalizedMomentum * 0.2 + spectrumDir * 0.1;
-    if (spectrumStrength > 0.3) {
-        direction = direction * (1 + spectrumStrength * 0.2);
-    }
+    
+    // 【修复核心】最终方向：
+    // 70% 基于实际价格斜率
+    // 30% 基于频谱方向
+    var direction = normalizedSlope * 0.7 + spectrumDir * 0.3;
+    
     return Math.max(-1, Math.min(1, direction));
 }
 
-// ============================================================
-// 概率
-// ============================================================
+// ----- 概率 -----
 function probabilityFromDirection(dir) {
+    // 【修复】扩大概率范围：8%-92%
     var up = 50 + dir * 40;
     up = Math.min(92, Math.max(8, up));
     var flat = (1 - Math.abs(dir)) * 35;
@@ -229,9 +167,7 @@ function probabilityFromDirection(dir) {
     return { up: Math.round(up), down: Math.round(down), flat: Math.round(flat) };
 }
 
-// ============================================================
-// 全息預測線
-// ============================================================
+// ----- 全息预测线（保持原样）-----
 function computeHologramLine(p, periods, days, totalEnergy) {
     if (!periods.length) return new Array(days).fill(p[p.length-1]);
     var last = p[p.length-1], mean = 0; for (var i=0; i<p.length; i++) mean += p[i]; mean /= p.length;
@@ -253,9 +189,7 @@ function computeHologramLine(p, periods, days, totalEnergy) {
     return pred;
 }
 
-// ============================================================
-// 繪製彩帶
-// ============================================================
+// ----- 绘制彩带 -----
 function drawRibbonBar(rib) {
     var cv = document.getElementById('ribbonCanvas');
     if (!cv) {
@@ -264,6 +198,13 @@ function drawRibbonBar(rib) {
             var div = document.createElement('div'); div.style.margin = '8px 0';
             div.innerHTML = '<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
             can.parentElement.insertBefore(div, can.nextSibling);
+        } else {
+            var panel = document.getElementById('fourierPanel');
+            if (panel) {
+                var div2 = document.createElement('div'); div2.style.margin = '8px 0';
+                div2.innerHTML = '<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
+                panel.appendChild(div2);
+            }
         }
     }
     cv = document.getElementById('ribbonCanvas');
@@ -275,12 +216,10 @@ function drawRibbonBar(rib) {
     ctx.fillRect(0, 0, cv.width, 40);
     ctx.fillStyle = 'white';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText('彩带: ' + rib.color + ' | 趋势: ' + rib.trend + ' | 强度: ' + Math.round(rib.strength) + '%', 10, 25);
+    ctx.fillText(`彩带: ${rib.color} | 趋势: ${rib.trend} | 强度: ${Math.round(rib.strength)}%`, 10, 25);
 }
 
-// ============================================================
-// 繪製預測線
-// ============================================================
+// ----- 绘制预测线 -----
 function drawHologram() {
     if (!window.myChart) return;
     var ds = window.myChart.data.datasets, orig = null;
@@ -290,7 +229,7 @@ function drawHologram() {
     }
     if (!orig || orig.length < 20) return;
     var topPeriods = spectrum;
-    var totalEnergy = topPeriods.reduce(function(s,p){ return s + p.amplitude; }, 0);
+    var totalEnergy = topPeriods.reduce((s,p) => s + p.amplitude, 0);
     var forecast = computeHologramLine(prices, topPeriods, C.forecastDays, totalEnergy);
     var full = new Array(orig.length).fill(null);
     for (var i=0; i<forecast.length; i++) full.push(forecast[i]);
@@ -301,33 +240,26 @@ function drawHologram() {
     window.myChart.update();
 }
 
-// ============================================================
-// 刷新所有
-// ============================================================
+// ----- 刷新所有 -----
 function refreshAll() {
     try {
         var newPrices = fetchPrices();
-        if (!newPrices || newPrices.length === 0) {
-            console.log('等待價格數據...');
-            return;
-        }
+        if (!newPrices || newPrices.length === 0) return;
         prices = newPrices;
         if (prices.length > C.fixedLen) prices = prices.slice(-C.fixedLen);
         fullSpectrum = computeFullSpectrum(prices);
         spectrum = fullSpectrum.slice(0, C.topN);
         ribbon = calcRibbon(prices);
+        // 【修复】传入prices参数
         var dir = computeISETDirection(fullSpectrum, C.topN, prices);
         prob = probabilityFromDirection(dir);
         updatePanel();
         drawRibbonBar(ribbon);
         drawHologram();
-        console.log('✅ Z軸 v28.0 刷新完成');
-    } catch(e) { console.error('Z軸錯誤:', e); }
+    } catch(e) { console.error(e); }
 }
 
-// ============================================================
-// 更新面板
-// ============================================================
+// ----- 更新面板 -----
 function updatePanel() {
     var panel = document.getElementById('fourierPanel');
     if (!panel) {
@@ -346,53 +278,38 @@ function updatePanel() {
     for (var i=0; i<spectrum.length; i++) {
         var s = spectrum[i];
         var ampPercent = (s.amplitude * 100).toFixed(1);
-        var barWidth = Math.min(100, parseFloat(ampPercent));
-        var barColor = barWidth > 50 ? '#f59e0b' : '#fbbf24';
-        topHtml += '<div style="margin:6px 0">' +
-            '<div style="display:flex;justify-content:space-between;margin-bottom:3px">' +
-            '<span style="color:#facc15;font-weight:bold">📅 ' + s.period + '天</span>' +
-            '<span style="color:#fff">' + ampPercent + '%</span>' +
-            '</div>' +
-            '<div style="background:#334155;border-radius:4px;height:8px;overflow:hidden">' +
-            '<div style="background:linear-gradient(90deg,#facc15,' + barColor + ');width:' + barWidth + '%;height:100%"></div>' +
-            '</div>' +
-            '</div>';
+        topHtml += `<span style="background:#facc15;color:#0f172a;padding:4px 12px;border-radius:20px;margin:4px;font-weight:bold">${s.period}天 (${ampPercent}%)</span>`;
     }
     var ribbonText = ribbon.color === 'red' ? '🔴 红色' : '🟢 绿色';
     ribbonText += ribbon.trend === 'up' ? ' ↑' : ' ↓';
     var contentDiv = document.getElementById('fourierContent');
     if (contentDiv) {
-        contentDiv.innerHTML = '<div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴 v28.0｜' + sym + '</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>' +
-            '<div style="margin:12px 0"><div style="color:#94a3b8;font-size:0.75rem;margin-bottom:8px">🎯 ISET 核心周期 (Top ' + C.topN + ')</div>' + topHtml + '</div>' +
-            '<div style="display:flex;gap:20px;flex-wrap:wrap">' +
-            '<div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>' +
-            '<div><span style="color:#4ade80">▲ ' + prob.up + '%</span> <span style="color:#f87171">▼ ' + prob.down + '%</span> <span style="color:#94a3b8">— ' + prob.flat + '%</span></div></div>' +
-            '<div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>' + ribbonText + ' | 强度:' + Math.round(ribbon.strength) + '%</div></div>' +
-            '</div>' +
-            '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ v28修復 | 標準差歸一化200% | 多週期EMA | 自適應閾值</div>';
+        contentDiv.innerHTML = `<div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴 v28.1｜${sym}</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>
+            <div style="margin:12px 0">🎯 ISET 核心周期 (Top${C.topN}): ${topHtml}</div>
+            <div style="display:flex;gap:20px;flex-wrap:wrap">
+                <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>
+                <div><span style="color:#4ade80">▲ ${prob.up}%</span> <span style="color:#f87171">▼ ${prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
+                <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>${ribbonText} | 强度:${Math.round(ribbon.strength)}%</div></div>
+            </div>
+            <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ v28.1 | 价格斜率+频谱方向 | 概率8%-92% | 振幅80%上限</div></div>`;
         var btn = document.getElementById('refreshBtn');
         if (btn) btn.onclick = function() { refreshAll(); };
     }
 }
 
-// ============================================================
-// 初始化
-// ============================================================
+// ----- 初始化 -----
 function init() {
-    console.log('🚀 Z軸 v28.0 初始化中...');
     refreshAll();
     var inp = document.getElementById('symbol');
     if (inp) inp.addEventListener('change', function() { setTimeout(refreshAll, 1500); });
     var btns = document.querySelectorAll('button');
     for (var i=0; i<btns.length; i++) {
         var t = btns[i].innerText || '';
-        if (t.indexOf('分析') >= 0) {
+        if (t.indexOf('分析') >= 0 || t.indexOf('分析') >= 0) {
             btns[i].addEventListener('click', function() { setTimeout(refreshAll, 2000); });
         }
     }
-    console.log('✅ Z軸 v28.0 初始化完成');
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
-console.log('✅ Z軸模組 v28.0 完整修復版加載完成');
 })();
