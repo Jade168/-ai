@@ -1,5 +1,5 @@
 (function(){
-console.log('Z轴模块 v15.0 稳定版');
+console.log('Z轴模块 v16.0 最终稳定版');
 
 // ---------- 配置 ----------
 var MAX_DAYS = 200;
@@ -19,7 +19,6 @@ function getSymbol() {
 // ---------- 从图表获取价格（每次都实时读取）----------
 function fetchPrices() {
     try {
-        // 1. 从 Chart.js 获取
         if (window.myChart && window.myChart.data) {
             var ds = window.myChart.data.datasets;
             for (var i = 0; i < ds.length; i++) {
@@ -30,7 +29,6 @@ function fetchPrices() {
                 }
             }
         }
-        // 2. 从表格获取
         var rows = document.querySelectorAll('table tbody tr');
         if (rows.length > 10) {
             var tmp = [];
@@ -124,7 +122,8 @@ function computeRibbon(p) {
     var curB = b[b.length-1], curD = d[d.length-1], prevB = b[b.length-2];
     var color = curB > curD ? 'red' : 'green';
     var trend = curB > prevB ? 'up' : 'down';
-    var strength = Math.min(100, Math.abs((curB-curD)/curD)*100);
+    // 防止除以零
+    var strength = (curD === 0) ? 0 : Math.min(100, Math.abs((curB-curD)/curD)*100);
     return { color:color, trend:trend, strength:strength };
 }
 
@@ -141,7 +140,7 @@ function computeISETDirection(sp, topN) {
     return totalE === 0 ? 0 : weighted / totalE;
 }
 
-// ---------- 概率 ----------
+// ---------- 概率（保证总和100）----------
 function probability(dir) {
     var up = 50 + dir*35;
     up = Math.min(85, Math.max(15, up));
@@ -149,8 +148,15 @@ function probability(dir) {
     flat = Math.min(50, Math.max(10, flat));
     var down = 100 - up - flat;
     down = Math.min(85, Math.max(5, down));
-    var total = up+down+flat;
-    if (total !== 100) up = Math.min(85, Math.max(15, up + (100-total)));
+    // 重新计算确保总和100
+    var total = up + down + flat;
+    if (total !== 100) {
+        var diff = 100 - total;
+        // 优先调整 flat 和 down
+        if (flat + diff >= 10 && flat + diff <= 50) flat += diff;
+        else if (down + diff >= 5 && down + diff <= 85) down += diff;
+        else up += diff;
+    }
     return { up:Math.round(up), down:Math.round(down), flat:Math.round(flat) };
 }
 
@@ -251,7 +257,9 @@ function updateContent() {
 function refreshAll() {
     var newPrices = fetchPrices();
     if (!newPrices || newPrices.length < 20) {
-        console.warn('无法获取实时数据，请确保图表已加载');
+        console.warn('无法获取实时数据，将稍后重试');
+        // 如果无数据，延迟重试一次
+        setTimeout(refreshAll, 1000);
         return;
     }
     prices = newPrices;
@@ -283,12 +291,12 @@ function createPanel() {
 function bindEvents() {
     var symInput = document.getElementById('symbol');
     if (symInput) {
-        symInput.addEventListener('change', function() { setTimeout(refreshAll, 800); });
+        symInput.addEventListener('change', function() { setTimeout(refreshAll, 1500); });
     }
     var btns = document.querySelectorAll('button');
     for (var i=0; i<btns.length; i++) {
         if ((btns[i].innerText||'').indexOf('分析') >= 0) {
-            btns[i].addEventListener('click', function() { setTimeout(refreshAll, 1200); });
+            btns[i].addEventListener('click', function() { setTimeout(refreshAll, 2000); });
         }
     }
 }
@@ -296,8 +304,21 @@ function bindEvents() {
 // ---------- 初始化 ----------
 function init() {
     createPanel();
-    refreshAll();
-    bindEvents();
+    // 尝试立即加载，如果失败则延迟重试
+    var attempt = function() {
+        var data = fetchPrices();
+        if (data && data.length >= 20) {
+            prices = data;
+            spectrum = computeSpectrum(prices);
+            ribbon = computeRibbon(prices);
+            updateContent();
+            bindEvents();
+        } else {
+            console.log('等待图表加载...');
+            setTimeout(attempt, 500);
+        }
+    };
+    attempt();
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
