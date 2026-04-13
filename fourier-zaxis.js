@@ -1,9 +1,10 @@
 (function(){
-console.log('📐 Z轴模块 v13.0 ｜ 面板永驻｜彩带稳定｜ISET完整');
+console.log('📐 Z轴模块 v14.0 ｜ 强制读图表数据｜无固定模拟｜换股必变');
 
 var C = { fixedLen: 200, topN: 5, forecastDays: 20 };
 var prices = [], spectrum = [], ribbon = { color: 'gray', trend: 'flat', strength: 0 };
 var forecastLine = [], isetDir = 0;
+var currentSymbol = '';
 
 // ---------- 辅助 ----------
 function getSymbol() {
@@ -11,43 +12,21 @@ function getSymbol() {
     catch(e) { return 'STK'; }
 }
 
-// ---------- 创建面板（只创建一次，之后只更新内容，不覆盖）----------
-function ensurePanel() {
-    var panel = document.getElementById('fourierPanel');
-    if (!panel) {
-        panel = document.createElement('div');
-        panel.id = 'fourierPanel';
-        panel.style.cssText = 'margin:16px;padding:16px;background:#1e293b;border-radius:16px;border:1px solid #334155';
-        var container = document.querySelector('.container') || document.body;
-        container.insertBefore(panel, container.firstChild);
-        // 创建彩带画布容器，独立于面板内容区域，避免被覆盖
-        var ribbonDiv = document.createElement('div');
-        ribbonDiv.id = 'ribbonContainer';
-        ribbonDiv.style.margin = '8px 0';
-        ribbonDiv.innerHTML = '<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
-        panel.appendChild(ribbonDiv);
-        // 创建内容区域，用于动态更新文本和周期标签
-        var contentDiv = document.createElement('div');
-        contentDiv.id = 'fourierContent';
-        panel.appendChild(contentDiv);
-    }
-    return document.getElementById('fourierContent');
-}
-
-// ---------- 加载价格数据 ----------
-function loadPricesOnce() {
-    if (prices.length > 0) return prices;
+// ---------- 从图表或表格实时读取价格（不缓存，每次调用都重新读取）----------
+function fetchCurrentPrices() {
     try {
+        // 1. 从 Chart.js 获取
         if (window.myChart && window.myChart.data) {
             var dsets = window.myChart.data.datasets;
             for (var i = 0; i < dsets.length; i++) {
                 var ds = dsets[i], lbl = ds.label || '';
                 if ((lbl.indexOf('收盘') >= 0 || lbl === 'close' || lbl === '价格') && ds.data) {
                     var d = ds.data.filter(v => v !== null && !isNaN(v) && v > 0);
-                    if (d.length > 20) { prices = d.length > C.fixedLen ? d.slice(-C.fixedLen) : d; return prices; }
+                    if (d.length > 20) return d.length > C.fixedLen ? d.slice(-C.fixedLen) : d;
                 }
             }
         }
+        // 2. 从表格获取
         var rows = document.querySelectorAll('table tbody tr');
         if (rows.length > 10) {
             var tmp = [];
@@ -58,15 +37,54 @@ function loadPricesOnce() {
                     if (!isNaN(val) && val > 0 && val < 10000) tmp.push(val);
                 }
             }
-            if (tmp.length > 20) { prices = tmp.length > C.fixedLen ? tmp.slice(-C.fixedLen) : tmp; return prices; }
+            if (tmp.length > 20) return tmp.length > C.fixedLen ? tmp.slice(-C.fixedLen) : tmp;
         }
-        // 固定模拟数据（无随机性，保证稳定）
-        for (var i = 0; i < C.fixedLen; i++) prices.push(150 + (i % 20) * 2);
-        return prices;
-    } catch(e) { console.error(e); return []; }
+        // 无真实数据时抛出错误，不使用模拟数据（避免结果假固定）
+        throw new Error('无法获取实时数据，请确保图表已加载');
+    } catch(e) {
+        console.error(e);
+        return null;
+    }
 }
 
-// ---------- FFT ----------
+// ---------- 强制刷新数据（换股时调用）----------
+function reloadData() {
+    var newPrices = fetchCurrentPrices();
+    if (newPrices && newPrices.length > 20) {
+        prices = newPrices;
+        spectrum = computeSpectrum(prices);
+        ribbon = computeRibbon(prices);
+        refreshUI();
+        console.log('数据已更新，股票:', getSymbol(), '价格长度:', prices.length);
+        return true;
+    } else {
+        console.warn('无法获取新股票数据，保留原数据');
+        return false;
+    }
+}
+
+// ---------- 创建面板（固定结构，不覆盖）----------
+function ensurePanel() {
+    var panel = document.getElementById('fourierPanel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'fourierPanel';
+        panel.style.cssText = 'margin:16px;padding:16px;background:#1e293b;border-radius:16px;border:1px solid #334155';
+        var container = document.querySelector('.container') || document.body;
+        container.insertBefore(panel, container.firstChild);
+        var ribbonDiv = document.createElement('div');
+        ribbonDiv.id = 'ribbonContainer';
+        ribbonDiv.style.margin = '8px 0';
+        ribbonDiv.innerHTML = '<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
+        panel.appendChild(ribbonDiv);
+        var contentDiv = document.createElement('div');
+        contentDiv.id = 'fourierContent';
+        panel.appendChild(contentDiv);
+    }
+    return document.getElementById('fourierContent');
+}
+
+// ---------- FFT (不变) ----------
 function fft(re, im) {
     var N = re.length; if (N <= 1) return;
     var j = 0;
@@ -138,7 +156,7 @@ function probabilityFromDirection(dir) {
     var flat = 20 + (1 - Math.abs(dir)) * 30; flat = Math.min(50, Math.max(10, flat));
     var down = 100 - up - flat; down = Math.max(5, Math.min(85, down));
     var total = up + down + flat;
-    if (total !== 100) up += (100 - total);  // 保证总和100
+    if (total !== 100) up = Math.min(85, Math.max(15, up + (100 - total))); // 安全补正
     return { up: Math.round(up), down: Math.round(down), flat: Math.round(flat) };
 }
 
@@ -198,7 +216,6 @@ function refreshUI() {
     var totalEnergy = topPeriods.reduce((s, p) => s + p.amplitude, 0);
     var forecast = computeHologramLine(prices, topPeriods, C.forecastDays, totalEnergy);
     forecastLine = forecast;
-    // 只更新内容区域，不重建整个面板
     var contentDiv = document.getElementById('fourierContent');
     if (contentDiv) {
         var sym = getSymbol();
@@ -218,27 +235,42 @@ function refreshUI() {
             </div>
             <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ FFT缓存 | 归一化振幅 | flat基于方向不确定性 | 预测线强度来自ISET能量</div>`;
         var btn = document.getElementById('refreshBtn');
-        if (btn) btn.onclick = function() { refreshUI(); };
+        if (btn) btn.onclick = function() { reloadData(); };
     }
     drawRibbonBar(ribbon);
     drawHologramOnChart(forecast);
     console.log('UI刷新 | ISET方向:', isetDir.toFixed(3), '上升概率:', prob.up);
 }
 
+// ---------- 初始化：创建面板，首次加载数据，监听换股 ----------
 function init() {
-    loadPricesOnce();
-    if (!prices.length) return;
-    prices = prices.length > C.fixedLen ? prices.slice(-C.fixedLen) : prices.slice();
-    spectrum = computeSpectrum(prices);
-    ribbon = computeRibbon(prices);
-    ensurePanel();          // 创建面板结构（只一次）
-    refreshUI();            // 填充内容
-    // 监听股票切换
-    var inp = document.getElementById('symbol');
-    if (inp) inp.addEventListener('change', function() { setTimeout(() => { prices = []; loadPricesOnce(); if(prices.length){ prices = prices.length > C.fixedLen ? prices.slice(-C.fixedLen) : prices.slice(); spectrum = computeSpectrum(prices); ribbon = computeRibbon(prices); refreshUI(); } }, 1000); });
+    ensurePanel();
+    // 首次加载数据
+    var initialData = fetchCurrentPrices();
+    if (initialData && initialData.length > 20) {
+        prices = initialData;
+        spectrum = computeSpectrum(prices);
+        ribbon = computeRibbon(prices);
+        refreshUI();
+    } else {
+        console.warn('无初始数据');
+    }
+    // 监听股票代码变化
+    var symInput = document.getElementById('symbol');
+    if (symInput) {
+        symInput.addEventListener('change', function() {
+            setTimeout(reloadData, 800); // 等待图表更新
+        });
+    }
+    // 监听分析按钮
     var btns = document.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) if ((btns[i].innerText || '').indexOf('分析') >= 0) btns[i].addEventListener('click', function() { setTimeout(() => { prices = []; loadPricesOnce(); if(prices.length){ prices = prices.length > C.fixedLen ? prices.slice(-C.fixedLen) : prices.slice(); spectrum = computeSpectrum(prices); ribbon = computeRibbon(prices); refreshUI(); } }, 1500); });
+    for (var i = 0; i < btns.length; i++) {
+        if ((btns[i].innerText || '').indexOf('分析') >= 0) {
+            btns[i].addEventListener('click', function() { setTimeout(reloadData, 1200); });
+        }
+    }
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
 })();
