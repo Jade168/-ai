@@ -1,9 +1,10 @@
 (function(){
-console.log('📐 Z轴模块 v28.0 完整修正版 | 斜率方向 | 标准差振幅 | 多周期彩带');
+console.log('📐 Z轴模块 v29.0 强制显示版');
 
 var C = { fixedLen: 200, topN: 5, forecastDays: 20 };
 var prices = [], fullSpectrum = [], spectrum = [], prob = { up: 33, down: 33, flat: 34 };
 var ribbon = { color: 'gray', trend: 'flat', strength: 0 };
+var panelCreated = false;
 
 function getSymbol() {
     try { var i = document.getElementById('symbol'); return i && i.value ? i.value.trim().toUpperCase() : 'STK'; }
@@ -66,8 +67,9 @@ function EMA(data, period) {
     return res;
 }
 
-// ---------- 计算频谱（标准差归一化，振幅上限2.0）----------
+// ---------- 计算频谱（标准差归一化）----------
 function computeFullSpectrum(p) {
+    if (!p || p.length < 10) return [];
     var n = p.length, size = 1; while (size < n) size <<= 1;
     var re = new Array(size).fill(0), im = new Array(size).fill(0);
     var m = mean(p);
@@ -77,7 +79,7 @@ function computeFullSpectrum(p) {
     var amps = [];
     for (var i = 1; i < n/2; i++) {
         var raw = Math.sqrt(re[i]*re[i] + im[i]*im[i]) / n;
-        var rel = Math.min(raw / std, 2.0);   // 归一化，上限200%
+        var rel = Math.min(raw / std, 2.0);
         var period = n / i;
         if (period >= 3 && period <= 500) {
             amps.push({ period: Math.round(period), amplitude: rel, phase: Math.atan2(im[i], re[i]) });
@@ -87,9 +89,9 @@ function computeFullSpectrum(p) {
     return amps;
 }
 
-// ---------- 彩带（多周期EMA + 动态阈值）----------
+// ---------- 彩带（多周期EMA）----------
 function calcRibbon(p) {
-    if (p.length < 50) return ribbon;
+    if (!p || p.length < 50) return { color: 'gray', trend: 'flat', strength: 0 };
     var ema10 = EMA(p, 10);
     var ema20 = EMA(p, 20);
     var ema50 = EMA(p, 50);
@@ -106,7 +108,7 @@ function calcRibbon(p) {
     return { color: color, trend: trend, strength: strength };
 }
 
-// ---------- ISET 方向：使用价格斜率主导，频谱能量微调 ----------
+// ---------- ISET 方向（价格斜率主导）----------
 function computeISETDirection(fullSpec, topN, p) {
     if (!fullSpec.length || p.length < 20) return 0;
     var last20 = p.slice(-20);
@@ -118,7 +120,7 @@ function computeISETDirection(fullSpec, topN, p) {
     return dir * (1 - weight) + (weight * (dir > 0 ? 0.2 : -0.2));
 }
 
-// ---------- 概率（保证总和100）----------
+// ---------- 概率 ----------
 function probabilityFromDirection(dir) {
     var up = 50 + dir * 35;
     up = Math.min(85, Math.max(15, up));
@@ -136,9 +138,9 @@ function probabilityFromDirection(dir) {
     return { up: Math.round(up), down: Math.round(down), flat: Math.round(flat) };
 }
 
-// ---------- 全息预测线（加入趋势惯性）----------
+// ---------- 全息预测线 ----------
 function computeHologramLine(p, periods, days, totalEnergy) {
-    if (!periods.length) return new Array(days).fill(p[p.length-1]);
+    if (!p || !periods.length) return new Array(days).fill(p ? p[p.length-1] : 100);
     var last = p[p.length-1], m = mean(p);
     var norm = periods.reduce((s,a)=>s+a.amplitude,0);
     if (norm === 0) norm = 1;
@@ -187,7 +189,7 @@ function drawRibbonBar(rib) {
     ctx.fillText(`彩带: ${rib.color} | 趋势: ${rib.trend} | 强度: ${Math.round(rib.strength)}%`, 10, 25);
 }
 
-// ---------- 绘制预测线到图表 ----------
+// ---------- 绘制预测线 ----------
 function drawHologram() {
     if (!window.myChart) return;
     var ds = window.myChart.data.datasets, orig = null;
@@ -208,42 +210,37 @@ function drawHologram() {
     window.myChart.update();
 }
 
-// ---------- 刷新所有（强制实时读取）----------
-function refreshAll() {
-    try {
-        var newPrices = fetchPrices();
-        if (!newPrices || newPrices.length === 0) {
-            console.warn('无法获取价格数据');
-            return;
-        }
-        prices = newPrices;
-        if (prices.length > C.fixedLen) prices = prices.slice(-C.fixedLen);
-        fullSpectrum = computeFullSpectrum(prices);
-        spectrum = fullSpectrum.slice(0, C.topN);
-        ribbon = calcRibbon(prices);
-        var dir = computeISETDirection(fullSpectrum, C.topN, prices);
-        prob = probabilityFromDirection(dir);
-        updatePanel();
-        drawRibbonBar(ribbon);
-        drawHologram();
-    } catch(e) { console.error(e); }
-}
-
-// ---------- 更新面板 ----------
-function updatePanel() {
+// ---------- 创建或更新面板（强制显示）----------
+function ensurePanel() {
     var panel = document.getElementById('fourierPanel');
     if (!panel) {
-        panel = document.createElement('div'); panel.id = 'fourierPanel';
+        panel = document.createElement('div');
+        panel.id = 'fourierPanel';
         panel.style.cssText = 'margin:16px;padding:16px;background:#1e293b;border-radius:16px;border:1px solid #334155';
-        var c = document.querySelector('.container') || document.body;
-        c.insertBefore(panel, c.firstChild);
-        var ribbonDiv = document.createElement('div'); ribbonDiv.style.margin = '8px 0';
+        var container = document.querySelector('.container') || document.body;
+        container.insertBefore(panel, container.firstChild);
+        var ribbonDiv = document.createElement('div');
+        ribbonDiv.style.margin = '8px 0';
         ribbonDiv.innerHTML = '<canvas id="ribbonCanvas" height="40" style="width:100%; height:40px; border-radius:8px"></canvas>';
         panel.appendChild(ribbonDiv);
-        var contentDiv = document.createElement('div'); contentDiv.id = 'fourierContent';
+        var contentDiv = document.createElement('div');
+        contentDiv.id = 'fourierContent';
         panel.appendChild(contentDiv);
+        panelCreated = true;
     }
+    return document.getElementById('fourierContent');
+}
+
+// ---------- 更新面板内容（即使无数据也显示等待）----------
+function updatePanel() {
+    var contentDiv = ensurePanel();
+    if (!contentDiv) return;
     var sym = getSymbol();
+    // 如果还没有数据，显示加载提示
+    if (!prices.length) {
+        contentDiv.innerHTML = `<div style="text-align:center;padding:20px;color:#94a3b8">⏳ 等待图表数据加载...</div>`;
+        return;
+    }
     var topHtml = '';
     for (var i=0; i<spectrum.length; i++) {
         var s = spectrum[i];
@@ -252,23 +249,45 @@ function updatePanel() {
     }
     var ribbonText = ribbon.color === 'red' ? '🔴 红色' : '🟢 绿色';
     ribbonText += ribbon.trend === 'up' ? ' ↑' : ' ↓';
-    var contentDiv = document.getElementById('fourierContent');
-    if (contentDiv) {
-        contentDiv.innerHTML = `<div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜${sym}</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>
-            <div style="margin:12px 0">🎯 ISET 核心周期 (Top${C.topN}): ${topHtml}</div>
-            <div style="display:flex;gap:20px;flex-wrap:wrap">
-                <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>
-                <div><span style="color:#4ade80">▲ ${prob.up}%</span> <span style="color:#f87171">▼ ${prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
-                <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>${ribbonText} | 强度:${Math.round(ribbon.strength)}%</div></div>
-            </div>
-            <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 标准差振幅 | 价格斜率方向 | 多周期EMA彩带</div></div>`;
-        var btn = document.getElementById('refreshBtn');
-        if (btn) btn.onclick = function() { refreshAll(); };
-    }
+    contentDiv.innerHTML = `<div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜${sym}</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>
+        <div style="margin:12px 0">🎯 ISET 核心周期 (Top${C.topN}): ${topHtml}</div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap">
+            <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>
+            <div><span style="color:#4ade80">▲ ${prob.up}%</span> <span style="color:#f87171">▼ ${prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
+            <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>${ribbonText} | 强度:${Math.round(ribbon.strength)}%</div></div>
+        </div>
+        <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 标准差振幅 | 价格斜率方向 | 多周期EMA彩带</div></div>`;
+    var btn = document.getElementById('refreshBtn');
+    if (btn) btn.onclick = function() { refreshAll(); };
 }
 
-// ---------- 初始化：监听换股事件 ----------
+// ---------- 刷新所有数据（异步重试）----------
+function refreshAll() {
+    try {
+        var newPrices = fetchPrices();
+        if (newPrices && newPrices.length > 20) {
+            prices = newPrices;
+            if (prices.length > C.fixedLen) prices = prices.slice(-C.fixedLen);
+            fullSpectrum = computeFullSpectrum(prices);
+            spectrum = fullSpectrum.slice(0, C.topN);
+            ribbon = calcRibbon(prices);
+            var dir = computeISETDirection(fullSpectrum, C.topN, prices);
+            prob = probabilityFromDirection(dir);
+            updatePanel();
+            drawRibbonBar(ribbon);
+            drawHologram();
+        } else {
+            // 无数据时仍然更新面板显示等待
+            updatePanel();
+            // 1秒后重试
+            setTimeout(refreshAll, 1000);
+        }
+    } catch(e) { console.error(e); setTimeout(refreshAll, 1000); }
+}
+
+// ---------- 初始化：创建面板，开始轮询数据 ----------
 function init() {
+    ensurePanel();
     refreshAll();
     var inp = document.getElementById('symbol');
     if (inp) inp.addEventListener('change', function() { setTimeout(refreshAll, 1500); });
