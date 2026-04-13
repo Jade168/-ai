@@ -1,5 +1,5 @@
 (function(){
-console.log('Z轴模块 v16.0 最终稳定版');
+console.log('Z轴模块 v18.0 强制显示版');
 
 // ---------- 配置 ----------
 var MAX_DAYS = 200;
@@ -9,6 +9,7 @@ var FORECAST_DAYS = 20;
 var prices = [];
 var spectrum = [];
 var ribbon = { color: 'gray', trend: 'flat', strength: 0 };
+var isUpdating = false;
 
 // ---------- 辅助 ----------
 function getSymbol() {
@@ -16,19 +17,21 @@ function getSymbol() {
     return inp ? inp.value.trim().toUpperCase() : 'STK';
 }
 
-// ---------- 从图表获取价格（每次都实时读取）----------
+// ---------- 从图表获取价格（实时）----------
 function fetchPrices() {
     try {
+        // 1. 从 Chart.js 获取
         if (window.myChart && window.myChart.data) {
             var ds = window.myChart.data.datasets;
             for (var i = 0; i < ds.length; i++) {
                 var label = ds[i].label || '';
-                if ((label.indexOf('收盘')>=0 || label==='close') && ds[i].data) {
+                if ((label.indexOf('收盘')>=0 || label==='close' || label==='价格') && ds[i].data) {
                     var d = ds[i].data.filter(v => v !== null && !isNaN(v) && v>0);
                     if (d.length > 20) return d.slice(-MAX_DAYS);
                 }
             }
         }
+        // 2. 从表格获取
         var rows = document.querySelectorAll('table tbody tr');
         if (rows.length > 10) {
             var tmp = [];
@@ -45,13 +48,16 @@ function fetchPrices() {
     } catch(e) { return null; }
 }
 
-// ---------- FFT (标准实现) ----------
+// ---------- FFT (标准) ----------
 function fft(re, im) {
     var n = re.length;
     if (n <= 1) return;
     var j = 0;
     for (var i=0; i<n-1; i++) {
-        if (i < j) { var tr=re[i]; re[i]=re[j]; re[j]=tr; var ti=im[i]; im[i]=im[j]; im[j]=ti; }
+        if (i < j) {
+            var tr = re[i]; re[i] = re[j]; re[j] = tr;
+            var ti = im[i]; im[i] = im[j]; im[j] = ti;
+        }
         var k = n>>1;
         while (k <= j) { j -= k; k >>= 1; }
         j += k;
@@ -122,7 +128,6 @@ function computeRibbon(p) {
     var curB = b[b.length-1], curD = d[d.length-1], prevB = b[b.length-2];
     var color = curB > curD ? 'red' : 'green';
     var trend = curB > prevB ? 'up' : 'down';
-    // 防止除以零
     var strength = (curD === 0) ? 0 : Math.min(100, Math.abs((curB-curD)/curD)*100);
     return { color:color, trend:trend, strength:strength };
 }
@@ -148,11 +153,9 @@ function probability(dir) {
     flat = Math.min(50, Math.max(10, flat));
     var down = 100 - up - flat;
     down = Math.min(85, Math.max(5, down));
-    // 重新计算确保总和100
-    var total = up + down + flat;
+    var total = up+down+flat;
     if (total !== 100) {
         var diff = 100 - total;
-        // 优先调整 flat 和 down
         if (flat + diff >= 10 && flat + diff <= 50) flat += diff;
         else if (down + diff >= 5 && down + diff <= 85) down += diff;
         else up += diff;
@@ -214,16 +217,24 @@ function drawForecastOnChart(forecast) {
     window.myChart.update();
 }
 
-// ---------- 更新面板内容（不重建整体）----------
+// ---------- 更新面板内容 ----------
 function updateContent() {
-    if (!spectrum.length) return;
+    var contentDiv = document.getElementById('fourierContent');
+    if (!contentDiv) return;
+    
+    // 如果还没有数据，显示加载中
+    if (!spectrum.length) {
+        contentDiv.innerHTML = '<div style="text-align:center;padding:20px;color:#94a3b8">⏳ 等待图表数据加载...</div>';
+        return;
+    }
+    
     var dir = computeISETDirection(spectrum, TOP_N);
     var prob = probability(dir);
     var topPeriods = spectrum.slice(0, TOP_N);
     var totalEnergy = topPeriods.reduce((s,p)=>s+p.amplitude, 0);
     var forecast = computeForecast(prices, topPeriods, FORECAST_DAYS, totalEnergy);
     drawForecastOnChart(forecast);
-
+    
     var sym = getSymbol();
     var topHtml = '';
     for (var i=0; i<topPeriods.length; i++) {
@@ -232,40 +243,41 @@ function updateContent() {
     }
     var ribbonText = ribbon.color==='red' ? '🔴 红色' : '🟢 绿色';
     ribbonText += ribbon.trend==='up' ? ' ↑' : ' ↓';
-    var contentDiv = document.getElementById('fourierContent');
-    if (contentDiv) {
-        contentDiv.innerHTML = `
-            <div style="display:flex;justify-content:space-between">
-                <h3 style="color:#facc15;margin:0">📐 Z轴｜${sym}</h3>
-                <button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button>
-            </div>
-            <div style="margin:12px 0">🎯 ISET 核心周期 (Top${TOP_N}): ${topHtml}</div>
-            <div style="display:flex;gap:20px;flex-wrap:wrap">
-                <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>
-                <div><span style="color:#4ade80">▲ ${prob.up}%</span> <span style="color:#f87171">▼ ${prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
-                <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>${ribbonText} | 强度:${Math.round(ribbon.strength)}%</div></div>
-            </div>
-            <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 实时读取图表数据 | 换股自动更新 | 刷新不重算FFT</div>
-        `;
-        var btn = document.getElementById('refreshBtn');
-        if (btn) btn.onclick = function() { refreshAll(); };
-    }
+    contentDiv.innerHTML = `
+        <div style="display:flex;justify-content:space-between">
+            <h3 style="color:#facc15;margin:0">📐 Z轴｜${sym}</h3>
+            <button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button>
+        </div>
+        <div style="margin:12px 0">🎯 ISET 核心周期 (Top${TOP_N}): ${topHtml}</div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap">
+            <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>
+            <div><span style="color:#4ade80">▲ ${prob.up}%</span> <span style="color:#f87171">▼ ${prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
+            <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>${ribbonText} | 强度:${Math.round(ribbon.strength)}%</div></div>
+        </div>
+        <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 实时读取图表数据 | 换股自动更新 | 刷新不重算FFT</div>
+    `;
+    var btn = document.getElementById('refreshBtn');
+    if (btn) btn.onclick = function() { refreshAll(); };
     drawRibbon(ribbon);
 }
 
 // ---------- 刷新全部（重新获取数据、重算）----------
 function refreshAll() {
+    if (isUpdating) return;
+    isUpdating = true;
     var newPrices = fetchPrices();
     if (!newPrices || newPrices.length < 20) {
-        console.warn('无法获取实时数据，将稍后重试');
-        // 如果无数据，延迟重试一次
-        setTimeout(refreshAll, 1000);
+        console.warn('无法获取实时数据，保留原有数据');
+        isUpdating = false;
+        // 仍然显示等待提示
+        updateContent();
         return;
     }
     prices = newPrices;
     spectrum = computeSpectrum(prices);
     ribbon = computeRibbon(prices);
     updateContent();
+    isUpdating = false;
     console.log('刷新完成，股票:', getSymbol(), '数据长度:', prices.length);
 }
 
@@ -295,17 +307,21 @@ function bindEvents() {
     }
     var btns = document.querySelectorAll('button');
     for (var i=0; i<btns.length; i++) {
-        if ((btns[i].innerText||'').indexOf('分析') >= 0) {
+        var text = btns[i].innerText || '';
+        if (text.indexOf('分析') >= 0 || text.indexOf('分析') >= 0) {
             btns[i].addEventListener('click', function() { setTimeout(refreshAll, 2000); });
         }
     }
 }
 
-// ---------- 初始化 ----------
+// ---------- 初始化：轮询直到图表就绪 ----------
 function init() {
     createPanel();
-    // 尝试立即加载，如果失败则延迟重试
-    var attempt = function() {
+    // 显示等待信息
+    updateContent();
+    // 轮询尝试获取数据
+    var tryCount = 0;
+    function poll() {
         var data = fetchPrices();
         if (data && data.length >= 20) {
             prices = data;
@@ -313,12 +329,17 @@ function init() {
             ribbon = computeRibbon(prices);
             updateContent();
             bindEvents();
+            console.log('初始化成功，数据长度:', prices.length);
+        } else if (tryCount < 30) {
+            tryCount++;
+            setTimeout(poll, 500);
         } else {
-            console.log('等待图表加载...');
-            setTimeout(attempt, 500);
+            console.warn('超过30次尝试仍未获取到图表数据');
+            var contentDiv = document.getElementById('fourierContent');
+            if (contentDiv) contentDiv.innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444">⚠️ 无法获取图表数据，请检查页面是否正常加载K线</div>';
         }
-    };
-    attempt();
+    }
+    poll();
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
