@@ -1,9 +1,8 @@
 (function(){
-console.log('📐 Z轴模块 v5.1 保留原有面板 + 彩带');
+console.log('📐 Z轴模块 v7.0 新逻辑版');
 
-// ========== 原有傅里叶逻辑（你之前用开嘅） ==========
-var C={fixedLen:200,topN:3,samples:50};
-var prices=[],spectrum=[],prob={up:33,down:33,flat:34};
+var C={fixedLen:200,topN:3};
+var prices=[],spectrum=[],prob={up:33,down:33,flat:34},ribbon={color:'gray',trend:'flat',strength:0};
 
 function getSymbol(){try{var i=document.getElementById('symbol');return i&&i.value?i.value.trim().toUpperCase():'STK'}catch(e){return'STK'}}
 
@@ -58,33 +57,12 @@ function getSpectrum(p){
     var amps=[];
     for(var i=1;i<Math.min(60,n/2);i++){
         var amp=Math.sqrt(re[i]*re[i]+im[i]*im[i])/n,per=n/i;
-        if(per>=5&&per<=300)amps.push({period:Math.round(per),amplitude:parseFloat((amp*100).toFixed(1))});
+        if(per>=5&&per<=300)amps.push({period:Math.round(per),amplitude:parseFloat((amp*100).toFixed(1)),phase:Math.atan2(im[i],re[i])});
     }
     amps.sort(function(a,b){return b.amplitude-a.amplitude});
     return amps.slice(0,5);
 }
 
-function calcProb(p,sp){
-    if(p.length<30)return{up:33,down:33,flat:34};
-    var look=20,top=sp.slice(0,C.topN),recent=p.slice(-look),pat=recent.map(function(v,i){return v/recent[0]}),sim=[];
-    for(var i=0;i<p.length-look-5;i++){
-        var win=p.slice(i,i+look),pat2=win.map(function(v,j){return v/win[0]}),diff=0;
-        for(var j=0;j<look;j++)diff+=Math.abs(pat2[j]-pat[j]);
-        var ret=(p[i+look+5]/p[i+look]-1)*100;
-        sim.push({diff:diff,ret:ret});
-    }
-    sim.sort(function(a,b){return a.diff-b.diff});
-    var topSim=sim.slice(0,C.samples),up=0,down=0,flat=0;
-    for(var i=0;i<topSim.length;i++){
-        if(topSim[i].ret>0.5)up++;
-        else if(topSim[i].ret<-0.5)down++;
-        else flat++;
-    }
-    var total=topSim.length;
-    return{up:Math.round(up/total*100),down:Math.round(down/total*100),flat:Math.round(flat/total*100)};
-}
-
-// ========== 彩带计算（新增） ==========
 function calcRibbon(p){
     if(p.length<30)return{color:'gray',trend:'flat',strength:0};
     var n=p.length,x1=[];
@@ -107,19 +85,60 @@ function calcRibbon(p){
     return{color:color,trend:trend,strength:strength};
 }
 
-// ========== 修正概率（加入彩带影响） ==========
-function adjustProbWithRibbon(originalProb, ribbon){
-    var up=originalProb.up, down=originalProb.down, flat=originalProb.flat;
-    if(ribbon.color=='red' && ribbon.trend=='up'){ up+=15; down-=10; }
-    else if(ribbon.color=='green' && ribbon.trend=='down'){ up-=10; down+=15; }
-    else if(ribbon.color=='red'){ up+=5; down+=5; }
-    else if(ribbon.color=='green'){ up-=5; down-=5; }
-    up=Math.min(85,Math.max(15,up)); down=Math.min(85,Math.max(5,down));
-    flat=100-up-down;
-    return{up:up,down:down,flat:flat};
+// 基础概率：最近10日线性回归斜率映射到30-70%
+function baseProbFromTrend(p){
+    if(p.length<10)return 50;
+    var recent=p.slice(-10);
+    var n=recent.length;
+    var sumX=0,sumY=0,sumXY=0,sumX2=0;
+    for(var i=0;i<n;i++){
+        var x=i;
+        var y=recent[i];
+        sumX+=x;
+        sumY+=y;
+        sumXY+=x*y;
+        sumX2+=x*x;
+    }
+    var slope=(n*sumXY-sumX*sumY)/(n*sumX2-sumX*sumX);
+    var avgPrice=sumY/n;
+    var slopePct=(slope/avgPrice)*100;
+    // 映射：slopePct -5% -> 30%, 0% -> 50%, +5% -> 70%
+    var prob=50+slopePct*4;
+    prob=Math.min(70,Math.max(30,prob));
+    return prob;
 }
 
-// ========== 绘制彩带图（新增） ==========
+// 傅里叶相位修正：最强周期当前相位余弦值
+function fourierPhaseCorrection(spectrum){
+    if(spectrum.length===0)return 0;
+    var top=spectrum[0];
+    var phase=top.phase;
+    var cosVal=Math.cos(phase);
+    if(cosVal>0.2)return 10;
+    if(cosVal<-0.2)return -10;
+    return 0;
+}
+
+// 彩带修正
+function ribbonCorrection(rib){
+    if(rib.color=='red' && rib.trend=='up') return 20;
+    if(rib.color=='red' && rib.trend=='down') return 5;
+    if(rib.color=='green' && rib.trend=='down') return -20;
+    if(rib.color=='green' && rib.trend=='up') return -5;
+    return 0;
+}
+
+function computeFinalProb(p,sp,rib){
+    var base=baseProbFromTrend(p);
+    var fourierCorr=fourierPhaseCorrection(sp);
+    var ribbonCorr=ribbonCorrection(rib);
+    var final=base + fourierCorr + ribbonCorr;
+    final=Math.min(85,Math.max(15,final));
+    var down=Math.max(5,Math.min(50,100-final-20));
+    var flat=100-final-down;
+    return{up:Math.round(final),down:Math.round(down),flat:Math.round(flat)};
+}
+
 function drawRibbonBar(rib){
     var cv=document.getElementById('ribbonCanvas');
     if(!cv){
@@ -147,7 +166,6 @@ function drawRibbonBar(rib){
     ctx.fillText('彩带: '+rib.color+' | 趋势: '+rib.trend+' | 强度: '+Math.round(rib.strength)+'%',10,25);
 }
 
-// ========== 全息预测线（保留） ==========
 function drawHologram(){
     if(!window.myChart)return;
     var ds=window.myChart.data.datasets,orig=null;
@@ -177,7 +195,6 @@ function drawHologram(){
     window.myChart.update();
 }
 
-// ========== 更新面板（保留原有样式，新增彩带信息） ==========
 function updatePanel(){
     var panel=document.getElementById('fourierPanel');
     if(!panel){
@@ -192,17 +209,21 @@ function updatePanel(){
         var s=spectrum[i];
         topHtml+='<span style="background:#facc15;color:#0f172a;padding:4px 12px;border-radius:20px;margin:4px;font-weight:bold">'+s.period+'天 ('+s.amplitude+'%)</span>';
     }
-    var ribbon=calcRibbon(prices);
-    var adjustedProb=adjustProbWithRibbon(prob,ribbon);
-    var ribbonText=ribbon.color=='red'?'🔴 红色(向上)':'🟢 绿色(向下)';
-    if(ribbon.trend=='up')ribbonText+=' ↑';else ribbonText+=' ↓';
+    var base=Math.round(baseProbFromTrend(prices));
+    var fourierCorr=fourierPhaseCorrection(spectrum);
+    var ribbonCorr=ribbonCorrection(ribbon);
+    var finalProb=prob;
+    var ribbonText=ribbon.color=='red'?'🔴 红色':'🟢 绿色';
+    ribbonText+=ribbon.trend=='up'?' ↑':' ↓';
     
     panel.innerHTML='<div><div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜'+sym+'</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>'+
         '<div style="margin:12px 0">🎯 主导周期: '+topHtml+'</div>'+
-        '<div style="display:flex;gap:20px;flex-wrap:wrap"><div><div style="color:#94a3b8;font-size:0.7rem">📊 原始概率(形态)</div><div><span style="color:#4ade80">▲'+prob.up+'%</span> <span style="color:#f87171">▼'+prob.down+'%</span> <span style="color:#94a3b8">—'+prob.flat+'%</span></div></div>'+
-        '<div><div style="color:#facc15;font-size:0.7rem">🎗️ 彩带修正后</div><div><span style="color:#4ade80">▲'+adjustedProb.up+'%</span> <span style="color:#f87171">▼'+adjustedProb.down+'%</span> <span style="color:#94a3b8">—'+adjustedProb.flat+'%</span></div></div>'+
+        '<div style="display:flex;gap:20px;flex-wrap:wrap"><div><div style="color:#94a3b8;font-size:0.7rem">📈 基础趋势(10日)</div><div>'+base+'%</div></div>'+
+        '<div><div style="color:#94a3b8;font-size:0.7rem">🌀 傅里叶相位</div><div>'+(fourierCorr>0?'+'+(fourierCorr)+'%':fourierCorr+'%')+'</div></div>'+
+        '<div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带修正</div><div>'+(ribbonCorr>0?'+'+(ribbonCorr)+'%':ribbonCorr+'%')+'</div></div>'+
+        '<div><div style="color:#facc15;font-size:0.7rem">🎯 未来5日概率</div><div><span style="color:#4ade80">▲ '+finalProb.up+'%</span> <span style="color:#f87171">▼ '+finalProb.down+'%</span> <span style="color:#94a3b8">— '+finalProb.flat+'%</span></div></div>'+
         '<div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>'+ribbonText+' | 强度:'+Math.round(ribbon.strength)+'%</div></div></div>'+
-        '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 基于'+C.fixedLen+'天数据 | 彩带辅助修正概率</div></div>';
+        '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 公式: 基础(50%) + 相位(20%) + 彩带(30%)</div></div>';
     
     var btn=document.getElementById('refreshBtn');
     if(btn)btn.onclick=function(){refreshAll();};
@@ -214,10 +235,11 @@ function refreshAll(){
         var raw=getPrices();
         if(raw.length)prices=raw;
         spectrum=getSpectrum(prices);
-        prob=calcProb(prices,spectrum);
+        ribbon=calcRibbon(prices);
+        prob=computeFinalProb(prices,spectrum,ribbon);
         updatePanel();
         drawHologram();
-        console.log('✅ 刷新完成 | 原始上升概率:'+prob.up+'%');
+        console.log('✅ 刷新完成 | 上升概率:'+prob.up+'%');
     }catch(e){console.error('刷新错误',e);}
 }
 
