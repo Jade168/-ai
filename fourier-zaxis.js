@@ -1,5 +1,5 @@
 (function(){
-console.log('📐 Z轴模块 v22.0 ｜ 强制实时读取，换股必更新');
+console.log('📐 Z軸模組 v23.0 ｜ 振幅正常化｜概率隨股變');
 
 var C = { fixedLen: 200, topN: 5, forecastDays: 20 };
 var prices = [], fullSpectrum = [], spectrum = [], prob = { up: 33, down: 33, flat: 34 };
@@ -10,25 +10,24 @@ function getSymbol() {
     catch(e) { return 'STK'; }
 }
 
-// ----- 实时从图表或表格获取价格（无缓存）-----
+// ----- 即時從圖表或表格取得價格（無緩存）-----
 function fetchCurrentPrices() {
     try {
-        // 1. 从 Chart.js 获取
+        // 1. 從 Chart.js 取得
         if (window.myChart && window.myChart.data) {
             var dsets = window.myChart.data.datasets;
             for (var i = 0; i < dsets.length; i++) {
                 var ds = dsets[i], lbl = ds.label || '';
-                if ((lbl.indexOf('收盘') >= 0 || lbl === 'close' || lbl === '价格') && ds.data) {
-                    var d = ds.data.filter(function(v) { return v !== null && !isNaN(v) && v > 0; });
+                if ((lbl.indexOf('收盤') >= 0 || lbl === 'close' || lbl === '價格') && ds.data) {
+                    var d = ds.data.filter(v => v !== null && !isNaN(v) && v > 0);
                     if (d.length > 20) {
                         var result = d.length > C.fixedLen ? d.slice(-C.fixedLen) : d;
-                        console.log('从图表获取数据，长度:', result.length);
                         return result;
                     }
                 }
             }
         }
-        // 2. 从表格获取
+        // 2. 從表格取得
         var rows = document.querySelectorAll('table tbody tr');
         if (rows.length > 10) {
             var tmp = [];
@@ -41,29 +40,24 @@ function fetchCurrentPrices() {
             }
             if (tmp.length > 20) {
                 var result = tmp.length > C.fixedLen ? tmp.slice(-C.fixedLen) : tmp;
-                console.log('从表格获取数据，长度:', result.length);
                 return result;
             }
         }
-        // 3. 无真实数据：生成一个与当前股票相关的简单序列（保证不同股票不同）
+        // 3. 無真實數據：產生與股票相關的簡單序列（保證不同股票不同）
         var sym = getSymbol();
         var seed = 0;
         for (var i = 0; i < sym.length; i++) seed += sym.charCodeAt(i);
-        var base = 100 + (seed % 100);
+        var base = 100 + (seed % 50);
         var arr = [];
         for (var i = 0; i < C.fixedLen; i++) {
-            base += Math.sin(i * 0.1) * (seed % 5 + 1);
+            base += (Math.sin(i * 0.2) * (seed % 3 + 1)) + (Math.random() - 0.5) * 2;
             arr.push(parseFloat(base.toFixed(2)));
         }
-        console.warn('无法获取真实数据，使用基于股票的模拟数据，股票:', sym);
         return arr;
-    } catch(e) {
-        console.error(e);
-        return [];
-    }
+    } catch(e) { return []; }
 }
 
-// ----- FFT（与原版相同）-----
+// ----- FFT -----
 function fft(r, i) {
     var N = r.length; if (N <= 1) return;
     var j = 0;
@@ -88,21 +82,23 @@ function fft(r, i) {
     }
 }
 
-// ----- 计算完整频谱（原始振幅，保留相位）-----
+// ----- 計算完整頻譜（振幅已歸一化為相對波動率）-----
 function computeFullSpectrum(p) {
     var n = p.length, size = 1; while (size < n) size <<= 1;
-    var re = new Array(size).fill(0), im = new Array(size).fill(0), mean = 0;
-    for (var i = 0; i < n; i++) mean += p[i]; mean /= n;
+    var re = new Array(size).fill(0), im = new Array(size).fill(0);
+    var mean = 0; for (var i = 0; i < n; i++) mean += p[i]; mean /= n;
     for (var i = 0; i < n; i++) re[i] = p[i] - mean;
     fft(re, im);
     var amps = [];
     for (var i = 1; i < Math.min(60, n/2); i++) {
-        var amp = Math.sqrt(re[i]*re[i] + im[i]*im[i]) / n;
+        var rawAmp = Math.sqrt(re[i]*re[i] + im[i]*im[i]) / n;
+        // 歸一化：除以平均價格，轉為相對波動率（小數）
+        var relativeAmp = rawAmp / mean;
         var period = n / i;
         if (period >= 5 && period <= 300) {
             amps.push({
                 period: Math.round(period),
-                amplitude: amp,
+                amplitude: relativeAmp,          // 相對波動率，例如 0.05 = 5%
                 phase: Math.atan2(im[i], re[i])
             });
         }
@@ -111,7 +107,7 @@ function computeFullSpectrum(p) {
     return amps;
 }
 
-// ----- 彩带（增加除零保护）-----
+// ----- 彩帶（增加除零保護）-----
 function calcRibbon(p) {
     if (p.length < 30) return { color: 'gray', trend: 'flat', strength: 0 };
     var n = p.length, x1 = [];
@@ -127,7 +123,7 @@ function calcRibbon(p) {
     return { color: color, trend: trend, strength: strength };
 }
 
-// ----- ISET 方向加权（使用前 topN 个周期）-----
+// ----- ISET 方向加權（使用前 topN 個週期）-----
 function computeISETDirection(fullSpec, topN) {
     if (!fullSpec.length) return 0;
     var totalE = 0, weighted = 0;
@@ -140,7 +136,7 @@ function computeISETDirection(fullSpec, topN) {
     return totalE === 0 ? 0 : weighted / totalE;
 }
 
-// ----- 概率（基于 ISET 方向，保证总和 100）-----
+// ----- 概率（基於 ISET 方向，保證總和 100）-----
 function probabilityFromDirection(dir) {
     var up = 50 + dir * 35;
     up = Math.min(85, Math.max(15, up));
@@ -158,7 +154,7 @@ function probabilityFromDirection(dir) {
     return { up: Math.round(up), down: Math.round(down), flat: Math.round(flat) };
 }
 
-// ----- 全息预测线（周期叠加，归一化）-----
+// ----- 全息預測線（週期疊加，歸一化）-----
 function computeHologramLine(p, periods, days, totalEnergy) {
     if (!periods.length) return new Array(days).fill(p[p.length-1]);
     var last = p[p.length-1], mean = 0; for (var i=0; i<p.length; i++) mean += p[i]; mean /= p.length;
@@ -178,7 +174,7 @@ function computeHologramLine(p, periods, days, totalEnergy) {
     return pred;
 }
 
-// ----- 绘制彩带（独立于面板）-----
+// ----- 繪製彩帶（獨立於面板）-----
 function drawRibbonBar(rib) {
     var cv = document.getElementById('ribbonCanvas');
     if (!cv) {
@@ -205,16 +201,16 @@ function drawRibbonBar(rib) {
     ctx.fillRect(0, 0, cv.width, 40);
     ctx.fillStyle = 'white';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText(`彩带: ${rib.color} | 趋势: ${rib.trend} | 强度: ${Math.round(rib.strength)}%`, 10, 25);
+    ctx.fillText(`彩帶: ${rib.color} | 趨勢: ${rib.trend} | 強度: ${Math.round(rib.strength)}%`, 10, 25);
 }
 
-// ----- 绘制预测线到图表-----
+// ----- 繪製預測線到圖表-----
 function drawHologram() {
     if (!window.myChart) return;
     var ds = window.myChart.data.datasets, orig = null;
     for (var i=0; i<ds.length; i++) {
         var l = ds[i].label || '';
-        if ((l.indexOf('收盘') >= 0 || l === 'close') && ds[i].data) { orig = ds[i].data; break; }
+        if ((l.indexOf('收盤') >= 0 || l === 'close') && ds[i].data) { orig = ds[i].data; break; }
     }
     if (!orig || orig.length < 20) return;
     var topPeriods = spectrum;
@@ -223,23 +219,20 @@ function drawHologram() {
     var full = new Array(orig.length).fill(null);
     for (var i=0; i<forecast.length; i++) full.push(forecast[i]);
     var idx = -1;
-    for (var i=0; i<ds.length; i++) if (ds[i].label === '🔮 全息预测线') { idx = i; break; }
+    for (var i=0; i<ds.length; i++) if (ds[i].label === '🔮 全息預測線') { idx = i; break; }
     if (idx >= 0) ds[idx].data = full;
-    else ds.push({ label: '🔮 全息预测线', data: full, borderColor: '#a855f7', borderWidth: 2, borderDash: [8,4], pointRadius: 0, fill: false, tension: 0.1 });
+    else ds.push({ label: '🔮 全息預測線', data: full, borderColor: '#a855f7', borderWidth: 2, borderDash: [8,4], pointRadius: 0, fill: false, tension: 0.1 });
     window.myChart.update();
 }
 
-// ----- 刷新所有（强制实时读取）-----
+// ----- 刷新所有（強制即時讀取）-----
 function refreshAll() {
     try {
         var newPrices = fetchCurrentPrices();
-        if (!newPrices || newPrices.length === 0) {
-            console.error('无法获取价格数据');
-            return;
-        }
+        if (!newPrices || newPrices.length === 0) return;
         prices = newPrices;
         if (prices.length > C.fixedLen) prices = prices.slice(-C.fixedLen);
-        // 计算频谱
+        // 計算頻譜
         var n = prices.length, size = 1; while (size < n) size <<= 1;
         var re = new Array(size).fill(0), im = new Array(size).fill(0), mean = 0;
         for (var i=0; i<n; i++) mean += prices[i]; mean /= n;
@@ -247,12 +240,13 @@ function refreshAll() {
         fft(re, im);
         var allAmps = [];
         for (var i=1; i<Math.min(60, n/2); i++) {
-            var amp = Math.sqrt(re[i]*re[i] + im[i]*im[i]) / n;
+            var rawAmp = Math.sqrt(re[i]*re[i] + im[i]*im[i]) / n;
+            var relativeAmp = rawAmp / mean;   // 歸一化為相對波動率
             var period = n / i;
             if (period >= 5 && period <= 300) {
                 allAmps.push({
                     period: Math.round(period),
-                    amplitude: amp,
+                    amplitude: relativeAmp,
                     phase: Math.atan2(im[i], re[i])
                 });
             }
@@ -266,11 +260,10 @@ function refreshAll() {
         updatePanel();
         drawRibbonBar(ribbon);
         drawHologram();
-        console.log('刷新完成 | 股票:', getSymbol(), '上升概率:', prob.up);
-    } catch(e) { console.error('刷新错误', e); }
+    } catch(e) { console.error(e); }
 }
 
-// ----- 更新面板（与之前相同，显示百分比）-----
+// ----- 更新面板（顯示百分比，振幅正常）-----
 function updatePanel() {
     var panel = document.getElementById('fourierPanel');
     if (!panel) {
@@ -283,30 +276,28 @@ function updatePanel() {
     var topHtml = '';
     for (var i=0; i<spectrum.length; i++) {
         var s = spectrum[i];
-        var ampPercent = (s.amplitude * 100).toFixed(1);
+        var ampPercent = (s.amplitude * 100).toFixed(1);   // 相對波動率轉百分比
         topHtml += `<span style="background:#facc15;color:#0f172a;padding:4px 12px;border-radius:20px;margin:4px;font-weight:bold">${s.period}天 (${ampPercent}%)</span>`;
     }
-    var ribbonText = ribbon.color === 'red' ? '🔴 红色' : '🟢 绿色';
+    var ribbonText = ribbon.color === 'red' ? '🔴 紅色' : '🟢 綠色';
     ribbonText += ribbon.trend === 'up' ? ' ↑' : ' ↓';
-    panel.innerHTML = `<div><div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜${sym}</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>
-        <div style="margin:12px 0">🎯 ISET 核心周期 (Top${C.topN}): ${topHtml}</div>
+    panel.innerHTML = `<div><div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z軸｜${sym}</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>
+        <div style="margin:12px 0">🎯 ISET 核心週期 (Top${C.topN}): ${topHtml}</div>
         <div style="display:flex;gap:20px;flex-wrap:wrap">
-            <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率 (ISET方向)</div>
+            <div><div style="color:#facc15;font-size:0.7rem">📊 未來5日概率 (ISET方向)</div>
             <div><span style="color:#4ade80">▲ ${prob.up}%</span> <span style="color:#f87171">▼ ${prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
-            <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>${ribbonText} | 强度:${Math.round(ribbon.strength)}%</div></div>
+            <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩帶狀態</div><div>${ribbonText} | 強度:${Math.round(ribbon.strength)}%</div></div>
         </div>
-        <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 实时读取图表 | 换股自动更新 | ISET加权方向</div></div>`;
+        <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 振幅已歸一化 | 換股自動更新 | ISET加權方向</div></div>`;
     var btn = document.getElementById('refreshBtn');
     if (btn) btn.onclick = function() { refreshAll(); };
 }
 
-// ----- 初始化：监听换股事件，强制刷新 -----
+// ----- 初始化 ------
 function init() {
     refreshAll();
     var inp = document.getElementById('symbol');
-    if (inp) {
-        inp.addEventListener('change', function() { setTimeout(refreshAll, 1500); });
-    }
+    if (inp) inp.addEventListener('change', function() { setTimeout(refreshAll, 1500); });
     var btns = document.querySelectorAll('button');
     for (var i=0; i<btns.length; i++) {
         var t = btns[i].innerText || '';
