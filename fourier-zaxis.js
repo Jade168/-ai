@@ -242,8 +242,12 @@ function computeHologramLine(p, periods, days, totalEnergy) {
     }
     var last = p[p.length-1], n = p.length;
     var lookback = Math.min(20, n - 1);
-    var dailyRet = Math.log(last / p[n-1-lookback]) / lookback;
-    var norm = periods.reduce(function(s,a){ return s+a.amplitude; },0) || 1;
+    var basePrice = p[n-1-lookback];
+    if (!basePrice || basePrice <= 0 || last <= 0) basePrice = last;
+    var dailyRet = Math.log(last / basePrice) / lookback;
+    if (!isFinite(dailyRet)) dailyRet = 0;
+    dailyRet = Math.max(-0.02, Math.min(0.02, dailyRet));
+  var norm = periods.reduce(function(s,a){ return s+a.amplitude; },0) || 1;
     var intensity = Math.min(0.4, totalEnergy / 2.0);
     var recentVol = stdDev(p.slice(-20)) / mean(p.slice(-20));
     var pred = [], price = last;
