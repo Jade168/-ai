@@ -1,5 +1,5 @@
 (function(){
-console.log('📐 Z轴模块 v32.1 手机安全版 | 无模板字符串');
+console.log('📐 Z轴模块 v32.2 | 加法版预测线 + 技术指标融合');
 
 var C = { fixedLen: 200, topN: 5, forecastDays: 20 };
 var prices = [], fullSpectrum = [], spectrum = [], prob = { up: 33, down: 33, flat: 34 };
@@ -77,7 +77,7 @@ function EMA(data, period) {
     return res;
 }
 
-// ===================== 技术指标模块 =====================
+// ===================== 技术指标 =====================
 
 function calcRSI(p, period) {
     period = period || 14;
@@ -233,24 +233,31 @@ function probabilityFromDirection(dir) {
     return { up: Math.round(up), down: Math.round(down), flat: Math.round(flat) };
 }
 
-// ---------- 全息预测线（相位修复版）----------
+// ---------- 全息预测线（加法版，不会飞走）----------
 function computeHologramLine(p, periods, days, totalEnergy) {
-    if (!periods.length) {
-        var flatArr = [];
-        for (var k = 0; k < days; k++) flatArr.push(p[p.length-1]);
+    var last = p[p.length-1];
+    var flatArr = [];
+    if (!periods.length || !last || !isFinite(last)) {
+        for (var k = 0; k < days; k++) flatArr.push(last || 0);
         return flatArr;
     }
-    var last = p[p.length-1], n = p.length;
+    var n = p.length;
+
+    // 近期趋势（带保护，限制在 ±1%/天）
     var lookback = Math.min(20, n - 1);
     var basePrice = p[n-1-lookback];
-    if (!basePrice || basePrice <= 0 || last <= 0) basePrice = last;
+    if (!basePrice || basePrice <= 0) basePrice = last;
     var dailyRet = Math.log(last / basePrice) / lookback;
     if (!isFinite(dailyRet)) dailyRet = 0;
-    dailyRet = Math.max(-0.02, Math.min(0.02, dailyRet));
-  var norm = periods.reduce(function(s,a){ return s+a.amplitude; },0) || 1;
+    dailyRet = Math.max(-0.01, Math.min(0.01, dailyRet));
+
+    var norm = periods.reduce(function(s,a){ return s+a.amplitude; },0) || 1;
     var intensity = Math.min(0.4, totalEnergy / 2.0);
     var recentVol = stdDev(p.slice(-20)) / mean(p.slice(-20));
-    var pred = [], price = last;
+    if (!isFinite(recentVol)) recentVol = 0.02;
+
+    // 加法版：以现价为中心小幅波动
+    var pred = [];
     for (var d = 1; d <= days; d++) {
         var osc = 0;
         for (var i = 0; i < periods.length; i++) {
@@ -258,8 +265,10 @@ function computeHologramLine(p, periods, days, totalEnergy) {
             var amp = periods[i].amplitude / norm;
             osc += amp * Math.cos(2 * Math.PI * (n - 1 + d) / per + periods[i].phase);
         }
-        price *= Math.exp(dailyRet + osc * intensity * recentVol * 0.05);
-        pred.push(parseFloat(price.toFixed(2)));
+        var change = last * dailyRet * d + last * recentVol * osc * intensity * 0.5;
+        var val = last + change;
+        if (!isFinite(val)) val = last;
+        pred.push(parseFloat(val.toFixed(2)));
     }
     return pred;
 }
@@ -335,7 +344,7 @@ function refreshAll() {
     } catch(e) { console.error(e); }
 }
 
-// ---------- 更新面板（纯字符串拼接，无模板字符串）----------
+// ---------- 更新面板 ----------
 function updatePanel() {
     var panel = document.getElementById('fourierPanel');
     if (!panel) {
