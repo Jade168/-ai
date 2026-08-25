@@ -1,5 +1,5 @@
 (function(){
-console.log('📐 Z轴模块 v32.0 | 收益率FFT + Hanning窗 + 相位修复 + 技术指标融合');
+console.log('📐 Z轴模块 v32.1 手机安全版 | 无模板字符串');
 
 var C = { fixedLen: 200, topN: 5, forecastDays: 20 };
 var prices = [], fullSpectrum = [], spectrum = [], prob = { up: 33, down: 33, flat: 34 };
@@ -11,7 +11,7 @@ function getSymbol() {
     catch(e) { return 'STK'; }
 }
 
-// ----- 获取价格数据（优先图表，否则生成基于股票的模拟数据）-----
+// ----- 获取价格数据 -----
 function getPrices() {
     try {
         if (window.myChart && window.myChart.data) {
@@ -19,7 +19,7 @@ function getPrices() {
             for (var i = 0; i < ds.length; i++) {
                 var lbl = ds[i].label || '';
                 if ((lbl.indexOf('收盘') >= 0 || lbl === 'close' || lbl === '价格') && ds[i].data) {
-                    var d = ds[i].data.filter(v => v !== null && !isNaN(v) && v > 0);
+                    var d = ds[i].data.filter(function(v){ return v !== null && !isNaN(v) && v > 0; });
                     if (d.length > 20) {
                         return d.length > C.fixedLen ? d.slice(-C.fixedLen) : d;
                     }
@@ -40,7 +40,7 @@ function getPrices() {
     } catch(e) { return []; }
 }
 
-// ---------- FFT (标准) ----------
+// ---------- FFT ----------
 function fft(r, i) {
     var N = r.length; if (N <= 1) return;
     var j = 0;
@@ -66,10 +66,10 @@ function fft(r, i) {
 }
 
 // ---------- 辅助统计 ----------
-function mean(arr) { return arr.reduce((a,b)=>a+b,0)/arr.length; }
+function mean(arr) { return arr.reduce(function(a,b){return a+b;},0)/arr.length; }
 function stdDev(arr) {
     var m = mean(arr);
-    return Math.sqrt(arr.reduce((s,v)=>s+(v-m)*(v-m),0)/arr.length);
+    return Math.sqrt(arr.reduce(function(s,v){return s+(v-m)*(v-m);},0)/arr.length);
 }
 function EMA(data, period) {
     var alpha = 2/(period+1), res = [data[0]];
@@ -77,9 +77,8 @@ function EMA(data, period) {
     return res;
 }
 
-// ===================== 传统技术指标模块 =====================
+// ===================== 技术指标模块 =====================
 
-// RSI (Wilder 平滑法)
 function calcRSI(p, period) {
     period = period || 14;
     if (p.length < period + 1) return null;
@@ -98,17 +97,16 @@ function calcRSI(p, period) {
     return 100 - 100 / (1 + avgG / avgL);
 }
 
-// MACD (12/26/9)
 function calcMACD(p) {
     if (p.length < 35) return null;
     var e12 = EMA(p, 12), e26 = EMA(p, 26);
-    var dif = e12.map(function(v,i){ return v - e26[i]; });
+    var dif = [];
+    for (var i = 0; i < e12.length; i++) dif.push(e12[i] - e26[i]);
     var dea = EMA(dif, 9);
-    var i = dif.length - 1;
-    return { macd: dif[i], signal: dea[i], hist: (dif[i]-dea[i])*2 };
+    var last = dif.length - 1;
+    return { macd: dif[last], signal: dea[last], hist: (dif[last]-dea[last])*2 };
 }
 
-// ATR 近似（收盘价差分）
 function calcATR(p, period) {
     period = period || 14;
     if (p.length < period + 1) return null;
@@ -120,7 +118,6 @@ function calcATR(p, period) {
     return atr;
 }
 
-// 布林通道位置 %B
 function calcBollingerPos(p, period, mult) {
     period = period || 20; mult = mult || 2;
     if (p.length < period) return null;
@@ -130,7 +127,6 @@ function calcBollingerPos(p, period, mult) {
     return (p[p.length-1] - (m - mult*sd)) / (2 * mult * sd);
 }
 
-// 综合技术评分 (-100 ~ +100)
 function calcTechScore(p) {
     var score = 0, parts = [];
     var rsi = calcRSI(p);
@@ -153,7 +149,7 @@ function calcTechScore(p) {
     return { score: Math.max(-100, Math.min(100, score)), detail: parts.join(' | ') };
 }
 
-// ---------- 计算频谱（对数收益率 + Hanning窗）----------
+// ---------- 频谱（对数收益率 + Hanning窗）----------
 function getSpectrum(p) {
     if (p.length < 32) return [];
     var ret = [];
@@ -163,10 +159,11 @@ function getSpectrum(p) {
     var n = ret.length;
     if (n < 32) return [];
     var m = mean(ret);
-    var std = Math.max(stdDev(ret), 1e-6);
+    var std = Math.max(stdDev(ret), 0.000001);
 
     var size = 1; while (size < n) size <<= 1;
-    var re = new Array(size).fill(0), im = new Array(size).fill(0);
+    var re = [], im = [];
+    for (var i = 0; i < size; i++) { re.push(0); im.push(0); }
     var winSumSq = 0;
     for (var i = 0; i < n; i++) {
         var w = 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
@@ -189,7 +186,7 @@ function getSpectrum(p) {
     return amps;
 }
 
-// ---------- 彩带（多周期EMA + 动态阈值）----------
+// ---------- 彩带 ----------
 function calcRibbon(p) {
     if (p.length < 50) return { color: 'gray', trend: 'flat', strength: 0 };
     var ema10 = EMA(p, 10);
@@ -208,28 +205,21 @@ function calcRibbon(p) {
     return { color: color, trend: trend, strength: strength };
 }
 
-// ---------- ISET 方向（斜率40% + 技术指标40% + 频谱20%）----------
+// ---------- ISET 方向（三源融合）----------
 function computeISETDirection(fullSpec, topN, p) {
     if (!fullSpec.length || p.length < 35) return 0;
-
-    // ① 价格斜率
     var last20 = p.slice(-20);
     var slopeDir = Math.max(-1, Math.min(1,
         (last20[last20.length-1] - last20[0]) / last20[0] * 10));
-
-    // ② 技术指标综合
     var tech = calcTechScore(p);
     techInfo = tech;
     var techDir = tech.score / 100;
-
-    // ③ 频谱能量偏置
     var totalE = fullSpec.slice(0, topN).reduce(function(s,a){ return s+a.amplitude; },0);
     var specBias = totalE > 0.8 ? 0 : (totalE > 0.3 ? slopeDir * 0.5 : slopeDir);
-
     return slopeDir * 0.4 + techDir * 0.4 + specBias * 0.2;
 }
 
-// ---------- 概率（保证总和100）----------
+// ---------- 概率 ----------
 function probabilityFromDirection(dir) {
     dir = Math.max(-1, Math.min(1, dir));
     var up = 50 + dir * 35;
@@ -238,32 +228,30 @@ function probabilityFromDirection(dir) {
     flat = Math.min(50, Math.max(10, flat));
     var down = 100 - up - flat;
     down = Math.min(85, Math.max(5, down));
-    // 归一化到总和100
     var total = up + down + flat;
     up = up / total * 100; down = down / total * 100; flat = flat / total * 100;
     return { up: Math.round(up), down: Math.round(down), flat: Math.round(flat) };
 }
 
-// ---------- 全息预测线（相位以序列末尾为基准）----------
+// ---------- 全息预测线（相位修复版）----------
 function computeHologramLine(p, periods, days, totalEnergy) {
-    if (!periods.length) return new Array(days).fill(p[p.length-1]);
+    if (!periods.length) {
+        var flatArr = [];
+        for (var k = 0; k < days; k++) flatArr.push(p[p.length-1]);
+        return flatArr;
+    }
     var last = p[p.length-1], n = p.length;
-
-    // 近期趋势：几何级日收益率外推
     var lookback = Math.min(20, n - 1);
     var dailyRet = Math.log(last / p[n-1-lookback]) / lookback;
-
     var norm = periods.reduce(function(s,a){ return s+a.amplitude; },0) || 1;
     var intensity = Math.min(0.4, totalEnergy / 2.0);
     var recentVol = stdDev(p.slice(-20)) / mean(p.slice(-20));
-
     var pred = [], price = last;
     for (var d = 1; d <= days; d++) {
         var osc = 0;
         for (var i = 0; i < periods.length; i++) {
             var per = periods[i].period;
             var amp = periods[i].amplitude / norm;
-            // 关键修复：相位基准为序列末尾 → 用 (n-1+d)
             osc += amp * Math.cos(2 * Math.PI * (n - 1 + d) / per + periods[i].phase);
         }
         price *= Math.exp(dailyRet + osc * intensity * recentVol * 0.05);
@@ -300,7 +288,7 @@ function drawRibbonBar(rib) {
     ctx.fillRect(0, 0, cv.width, 40);
     ctx.fillStyle = 'white';
     ctx.font = 'bold 12px monospace';
-    ctx.fillText(`彩带: rib.color∣趋势:{rib.color} | 趋势:rib.color∣趋势:{rib.trend} | 强度: ${Math.round(rib.strength)}%`, 10, 25);
+    ctx.fillText('彩带: ' + rib.color + ' | 趋势: ' + rib.trend + ' | 强度: ' + Math.round(rib.strength) + '%', 10, 25);
 }
 
 // ---------- 绘制预测线 ----------
@@ -315,7 +303,8 @@ function drawHologram() {
     var topPeriods = spectrum;
     var totalEnergy = topPeriods.reduce(function(s,p){ return s+p.amplitude; },0);
     var forecast = computeHologramLine(prices, topPeriods, C.forecastDays, totalEnergy);
-    var full = new Array(orig.length).fill(null);
+    var full = [];
+    for (var i=0; i<orig.length; i++) full.push(null);
     for (var i=0; i<forecast.length; i++) full.push(forecast[i]);
     var idx = -1;
     for (var i=0; i<ds.length; i++) if (ds[i].label === '🔮 全息预测线') { idx = i; break; }
@@ -342,7 +331,7 @@ function refreshAll() {
     } catch(e) { console.error(e); }
 }
 
-// ---------- 更新面板 ----------
+// ---------- 更新面板（纯字符串拼接，无模板字符串）----------
 function updatePanel() {
     var panel = document.getElementById('fourierPanel');
     if (!panel) {
@@ -361,25 +350,33 @@ function updatePanel() {
     for (var i=0; i<spectrum.length; i++) {
         var s = spectrum[i];
         var ampPercent = (s.amplitude * 100).toFixed(1);
-        topHtml += `<span style="background:#facc15;color:#0f172a;padding:4px 12px;border-radius:20px;margin:4px;font-weight:bold">s.period天({s.period}天 (s.period天({ampPercent}%)</span>`;
+        topHtml += '<span style="background:#facc15;color:#0f172a;padding:4px 12px;border-radius:20px;margin:4px;font-weight:bold">' + s.period + '天 (' + ampPercent + '%)</span>';
     }
     var ribbonText = ribbon.color === 'red' ? '🔴 红色'
                    : ribbon.color === 'green' ? '🟢 绿色' : '⚪ 灰色';
     ribbonText += ribbon.trend === 'up' ? ' ↑' : (ribbon.trend === 'down' ? ' ↓' : ' —');
     var techColor = techInfo.score > 15 ? '#4ade80' : (techInfo.score < -15 ? '#f87171' : '#94a3b8');
+    var techSign = techInfo.score > 0 ? '+' : '';
+    var html = '';
+    html += '<div style="display:flex;justify-content:space-between">';
+    html += '<h3 style="color:#facc15;margin:0">📐 Z轴｜' + sym + '</h3>';
+    html += '<button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>';
+    html += '<div style="margin:12px 0">🎯 ISET 核心周期 (Top' + C.topN + '): ' + topHtml + '</div>';
+    html += '<div style="display:flex;gap:20px;flex-wrap:wrap">';
+    html += '<div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率</div>';
+    html += '<div><span style="color:#4ade80">▲ ' + prob.up + '%</span> ';
+    html += '<span style="color:#f87171">▼ ' + prob.down + '%</span> ';
+    html += '<span style="color:#94a3b8">— ' + prob.flat + '%</span></div></div>';
+    html += '<div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div>';
+    html += '<div>' + ribbonText + ' | 强度:' + Math.round(ribbon.strength) + '%</div></div>';
+    html += '<div><div style="color:#94a3b8;font-size:0.7rem">📈 技术指标评分</div>';
+    html += '<div style="color:' + techColor + ';font-weight:bold">' + techSign + techInfo.score + '</div>';
+    html += '<div style="font-size:0.6rem;color:#64748b">' + techInfo.detail + '</div></div>';
+    html += '</div>';
+    html += '<div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 收益率FFT+Hanning窗 | 三源融合方向 | RSI/MACD/%B/ATR</div>';
     var contentDiv = document.getElementById('fourierContent');
     if (contentDiv) {
-        contentDiv.innerHTML = `<div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜${sym}</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>
-            <div style="margin:12px 0">🎯 ISET 核心周期 (TopC.topN):{C.topN}):C.topN):{topHtml}</div>
-            <div style="display:flex;gap:20px;flex-wrap:wrap">
-                <div><div style="color:#facc15;font-size:0.7rem">📊 未来5日概率</div>
-                <div><span style="color:#4ade80">▲ prob.up{prob.up}%</span> <span style="color:#f87171">▼prob.up{prob.down}%</span> <span style="color:#94a3b8">— ${prob.flat}%</span></div></div>
-                <div><div style="color:#94a3b8;font-size:0.7rem">🎨 彩带状态</div><div>ribbonText∣强度:{ribbonText} | 强度:ribbonText∣强度:{Math.round(ribbon.strength)}%</div></div>
-                <div><div style="color:#94a3b8;font-size:0.7rem">📈 技术指标评分</div>
-                <div style="color:techColor;font−weight:bold">{techColor};font-weight:bold">techColor;font−weight:bold">{techInfo.score > 0 ? '+' : ''}${techInfo.score}</div>
-                <div style="font-size:0.6rem;color:#64748b">${techInfo.detail}</div></div>
-            </div>
-            <div style="margin-top:12px;font-size:0.6rem;color:#64748b;text-align:center">⚡ 收益率FFT+Hanning窗 | 三源融合方向 | RSI/MACD/%B/ATR</div>`;
+        contentDiv.innerHTML = html;
         var btn = document.getElementById('refreshBtn');
         if (btn) btn.onclick = function() { refreshAll(); };
     }
