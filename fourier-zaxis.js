@@ -12,32 +12,49 @@ function getSymbol() {
 }
 
 // ----- 获取价格数据 -----
+function getChartInstance() {
+    try {
+        if (window.myChart && window.myChart.data) return window.myChart;
+        if (window.priceChart && window.priceChart.data) return window.priceChart;
+        var canvas = document.getElementById('priceChart');
+        var chartApi = window.Chart;
+        if (canvas && chartApi && typeof chartApi.getChart === 'function') {
+            return chartApi.getChart(canvas) || null;
+        }
+    } catch(e) {
+        console.warn('读取主图表失败:', e);
+    }
+    return null;
+}
+
 function getPrices() {
     try {
-        if (window.myChart && window.myChart.data) {
-            var ds = window.myChart.data.datasets;
-            for (var i = 0; i < ds.length; i++) {
-                var lbl = ds[i].label || '';
-                if ((lbl.indexOf('收盘') >= 0 || lbl === 'close' || lbl === '价格') && ds[i].data) {
-                    var d = ds[i].data.filter(function(v){ return v !== null && !isNaN(v) && v > 0; });
-                    if (d.length > 20) {
-                        return d.length > C.fixedLen ? d.slice(-C.fixedLen) : d;
-                    }
-                }
-            }
+        var chart = getChartInstance();
+        if (!chart || !chart.data || !Array.isArray(chart.data.datasets)) return [];
+        var ds = chart.data.datasets;
+        for (var i = 0; i < ds.length; i++) {
+            var dataset = ds[i];
+            if (!dataset || !Array.isArray(dataset.data)) continue;
+            var lbl = String(dataset.label || '').toLowerCase();
+            var points = dataset.data;
+            var hasOhlc = points.some(function(point) {
+                return point && typeof point === 'object' && point.c !== undefined;
+            });
+            if (!hasOhlc && !(lbl.indexOf('收盘') >= 0 || lbl === 'close' || lbl === '价格')) continue;
+            var d = points.map(function(point) {
+                var value;
+                if (typeof point === 'number' || typeof point === 'string') value = Number(point);
+                else if (point && typeof point === 'object') value = Number(point.c !== undefined ? point.c : point.y);
+                else return null;
+                return Number.isFinite(value) && value > 0 ? value : null;
+            }).filter(function(value) { return value !== null; });
+            if (d.length > 20) return d.length > C.fixedLen ? d.slice(-C.fixedLen) : d;
         }
-        var sym = getSymbol();
-        var seed = 0;
-        for (var i = 0; i < sym.length; i++) seed += sym.charCodeAt(i);
-        var base = 100 + (seed % 100);
-        var arr = [];
-        for (var i = 0; i < C.fixedLen; i++) {
-            base += Math.sin(i * 0.2) * (seed % 5 + 1) + (Math.random() - 0.5) * 2;
-            arr.push(parseFloat(base.toFixed(2)));
-        }
-        console.log('使用模拟数据，股票:', sym);
-        return arr;
-    } catch(e) { return []; }
+        return [];
+    } catch(e) {
+        console.warn('无法读取真实K线收市价:', e);
+        return [];
+    }
 }
 
 // ---------- FFT ----------
@@ -330,8 +347,18 @@ function drawHologram() {
 function refreshAll() {
     try {
         var raw = getPrices();
-        if (raw.length) prices = raw;
-        if (prices.length > C.fixedLen) prices = prices.slice(-C.fixedLen);
+        if (!raw.length) {
+            prices = [];
+            fullSpectrum = [];
+            spectrum = [];
+            ribbon = { color: 'gray', trend: 'flat', strength: 0 };
+            techInfo = { score: 0, detail: '' };
+            updatePanel();
+            drawRibbonBar(ribbon);
+            console.warn('未取得真实K线数据，已停止生成指标信号。');
+            return;
+        }
+        prices = raw.length > C.fixedLen ? raw.slice(-C.fixedLen) : raw;
         fullSpectrum = getSpectrum(prices);
         spectrum = fullSpectrum.slice(0, C.topN);
         ribbon = calcRibbon(prices);
@@ -359,6 +386,16 @@ function updatePanel() {
         panel.appendChild(contentDiv);
     }
     var sym = getSymbol();
+    if (!prices.length) {
+        var waitingContent = document.getElementById('fourierContent');
+        if (waitingContent) {
+            waitingContent.innerHTML = '<div style="display:flex;justify-content:space-between"><h3 style="color:#facc15;margin:0">📐 Z轴｜' + sym + '</h3><button id="refreshBtn" style="background:#3b82f6;border:none;padding:4px 12px;border-radius:20px;color:white">🔄</button></div>' +
+                '<div style="margin-top:12px;color:#fbbf24">未取得真实K线数据，暂不生成指标分数或方向机率。</div>';
+            var waitingBtn = document.getElementById('refreshBtn');
+            if (waitingBtn) waitingBtn.onclick = function() { refreshAll(); };
+        }
+        return;
+    }
     var topHtml = '';
     for (var i=0; i<spectrum.length; i++) {
         var s = spectrum[i];
