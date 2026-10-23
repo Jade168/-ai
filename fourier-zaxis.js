@@ -450,3 +450,83 @@ function init() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
 })();
+
+// 1836.15 / 142857 / 369 reversal signal helper (experimental; not investment advice).
+(function attachCosmicSignal() {
+  const TIME_WINDOWS_BY_PERIOD = Object.freeze({
+    '5min': [3, 6, 9, 14, 28],
+    daily: [3, 6, 9, 14, 28, 36, 69, 99],
+    weekly: [3, 6, 9, 14, 28, 36, 69, 99]
+  });
+  const ATR_PERIOD = 14;
+  const BASE_NUM = 1836.15;
+  const LOWER_ATR_FACTOR = 0.142857;
+  const UPPER_ATR_FACTOR = 0.0183615;
+
+  function calculateCosmicSignal(klineData, currentPeriod, ticker) {
+    if (!Array.isArray(klineData) || klineData.length === 0) return [];
+    const period = String(currentPeriod || 'daily').toLowerCase();
+    const timeWindows = TIME_WINDOWS_BY_PERIOD[period] || TIME_WINDOWS_BY_PERIOD.daily;
+    const symbol = String(ticker || '').trim().toUpperCase();
+    const usesAbsoluteResonance = ['DJI', '^DJI', 'GSPC', '^GSPC', 'SPX', '^SPX'].includes(symbol);
+    const atrValues = [];
+    const results = [];
+    let previous = null;
+    let trendCount = 0;
+
+    for (let i = 0; i < klineData.length; i += 1) {
+      const bar = klineData[i];
+      const open = Number(bar && bar.o);
+      const high = Number(bar && bar.h);
+      const low = Number(bar && bar.l);
+      const close = Number(bar && bar.c);
+      const valid = [open, high, low, close].every(Number.isFinite) && close > 0 && high >= low && high >= Math.max(open, close) && low <= Math.min(open, close);
+      if (!valid) {
+        results.push({ date: bar && (bar.date ?? bar.timestamp), close: Number.isFinite(close) ? close : null, signal: 'HOLD', support: null, resistance: null, trendCount: 0, spaceResonance: false });
+        previous = null;
+        trendCount = 0;
+        atrValues.length = 0;
+        continue;
+      }
+
+      const previousTrendCount = trendCount;
+      const previousAtr = atrValues.length === ATR_PERIOD ? atrValues.reduce((sum, value) => sum + value, 0) / ATR_PERIOD : null;
+      let trueRange = high - low;
+      if (previous) trueRange = Math.max(trueRange, Math.abs(high - previous.close), Math.abs(low - previous.close));
+
+      if (previous) {
+        if (close > previous.close) trendCount = trendCount > 0 ? trendCount + 1 : 1;
+        else if (close < previous.close) trendCount = trendCount < 0 ? trendCount - 1 : -1;
+        else trendCount = 0;
+      } else {
+        trendCount = 0;
+      }
+
+      const support = previous && previousAtr !== null ? previous.close - previousAtr * LOWER_ATR_FACTOR : null;
+      const resistance = previous && previousAtr !== null ? previous.close + previousAtr * UPPER_ATR_FACTOR : null;
+      const nearestMultiplier = close > 0 ? Math.round(close / BASE_NUM) : 0;
+      const deviation = nearestMultiplier > 0 ? Math.abs(close - BASE_NUM * nearestMultiplier) / close : Infinity;
+      const spaceResonance = usesAbsoluteResonance && deviation < 0.015;
+      const timeResonance = timeWindows.includes(Math.abs(previousTrendCount));
+      const enoughHistory = previousAtr !== null;
+      const bullishReversal = previousTrendCount < 0 && close > open;
+      const bearishReversal = previousTrendCount > 0 && close < open;
+      const supportReclaimed = support !== null && low <= support && close > support;
+      const resistanceRejected = resistance !== null && high >= resistance && close < resistance;
+      let signal = 'HOLD';
+
+      if (enoughHistory && timeResonance) {
+        if (bullishReversal && (supportReclaimed || spaceResonance)) signal = 'STRONG_IN';
+        else if (bearishReversal && (resistanceRejected || spaceResonance)) signal = 'STRONG_OUT';
+      }
+
+      results.push({ date: bar.date ?? bar.timestamp, close, signal, support, resistance, trendCount, spaceResonance });
+      atrValues.push(trueRange);
+      if (atrValues.length > ATR_PERIOD) atrValues.shift();
+      previous = { close };
+    }
+    return results;
+  }
+
+  if (typeof window !== 'undefined') window.calculateCosmicSignal = calculateCosmicSignal;
+})();
